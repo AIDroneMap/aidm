@@ -1,22 +1,22 @@
 import os
 import shutil
-from opendm import log
-from opendm.osfm import OSFMContext, get_submodel_argv, get_submodel_paths, get_all_submodel_paths
-from opendm import types
-from opendm import io
-from opendm import system
-from opendm import orthophoto
-from opendm.dem import utils
-from opendm.dem.merge import euclidean_merge_dems
+from modules import log
+from modules.osfm import OSFMContext, get_submodel_argv, get_submodel_paths, get_all_submodel_paths
+from modules import types
+from modules import io
+from modules import system
+from modules import orthophoto
+from modules.dem import utils
+from modules.dem.merge import euclidean_merge_dems
 from opensfm.large import metadataset
-from opendm.cropper import Cropper
-from opendm.remote import LocalRemoteExecutor
-from opendm.shots import merge_geojson_shots, merge_cameras
-from opendm import point_cloud
-from opendm.utils import double_quote, add_raster_meta_tags
-from opendm.tiles.tiler import generate_dem_tiles
-from opendm.cogeo import convert_to_cogeo
-from opendm import multispectral
+from modules.cropper import Cropper
+from modules.remote import LocalRemoteExecutor
+from modules.shots import merge_geojson_shots, merge_cameras
+from modules import point_cloud
+from modules.utils import double_quote, add_raster_meta_tags
+from modules.tiles.tiler import generate_dem_tiles
+from modules.cogeo import convert_to_cogeo
+from modules import multispectral
 
 class ODMSplitStage(types.ODM_Stage):
     def process(self, args, outputs):

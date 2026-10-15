@@ -1,10 +1,10 @@
 import os, traceback, sys
 
-from opendm import context
-from opendm import types
-from opendm import io
-from opendm import system
-from opendm import log
+from modules import context
+from modules import types
+from modules import io
+from modules import system
+from modules import log
 
 from stages.dataset import ODMLoadDatasetStage
 from stages.run_opensfm import ODMOpenSfMStage

@@ -49,7 +49,7 @@ if [ "$1" = "--setup" ]; then
     echo "alias ls='ls --color=auto'" >> $HOME/.bashrc
 
     # Python paths
-    echo $(python3 /code/opendm/context.py) >> $HOME/.bashrc
+    echo $(python3 /code/modules/context.py) >> $HOME/.bashrc
     
     # Vim 
     printf "syntax on\nset showmatch\nset ts=4\nset sts=4\nset sw=4\nset autoindent\nset smartindent\nset smarttab\nset expandtab" > $HOME/.vimrc

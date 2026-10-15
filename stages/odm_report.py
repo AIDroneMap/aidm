@@ -3,18 +3,18 @@ import json
 import math
 import shutil
 
-from opendm import log
-from opendm import io
-from opendm import system
-from opendm import types
-from opendm.shots import get_geojson_shots_from_opensfm
-from opendm.osfm import OSFMContext
-from opendm import gsd
-from opendm.point_cloud import export_info_json
-from opendm.cropper import Cropper
-from opendm.orthophoto import get_orthophoto_vars, get_max_memory, generate_png
-from opendm.tiles.tiler import generate_colored_hillshade
-from opendm.utils import get_raster_stats, np_from_json
+from modules import log
+from modules import io
+from modules import system
+from modules import types
+from modules.shots import get_geojson_shots_from_opensfm
+from modules.osfm import OSFMContext
+from modules import gsd
+from modules.point_cloud import export_info_json
+from modules.cropper import Cropper
+from modules.orthophoto import get_orthophoto_vars, get_max_memory, generate_png
+from modules.tiles.tiler import generate_colored_hillshade
+from modules.utils import get_raster_stats, np_from_json
 
 def hms(seconds):
     h = seconds // 3600
@@ -173,7 +173,7 @@ class ODMReport(types.ODM_Stage):
                             "--writers.gdal.output_type=max "
                             "--writers.gdal.radius={} ".format(point_cloud_file, diagram_tiff, 
                                                                     resolution, views_dimension, radius))
-                report_assets = os.path.abspath(os.path.join(os.path.dirname(__file__), "../opendm/report"))
+                report_assets = os.path.abspath(os.path.join(os.path.dirname(__file__), "../modules/report"))
                 overlap_color_map = os.path.join(report_assets, "overlap_color_map.txt")
 
                 bounds_file_path = os.path.join(tree.odm_georeferencing, 'odm_georeferenced_model.bounds.gpkg')

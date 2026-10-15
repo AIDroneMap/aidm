@@ -8,7 +8,7 @@ import multiprocessing
 from multiprocessing.pool import ThreadPool
 import sys
 sys.path.append("../../")
-from opendm.gcp import GCPFile
+from modules.gcp import GCPFile
 
 parser = argparse.ArgumentParser(description='Exif Image Resize')
 parser.add_argument('--input', '-i',

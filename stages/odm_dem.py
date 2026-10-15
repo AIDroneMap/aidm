@@ -1,18 +1,18 @@
 import os, json, math
 from shutil import copyfile
 
-from opendm import io
-from opendm import log
-from opendm import system
-from opendm import context
-from opendm import types
-from opendm import gsd
-from opendm.dem import commands, utils
-from opendm.cropper import Cropper
-from opendm import pseudogeo
-from opendm.tiles.tiler import generate_dem_tiles
-from opendm.cogeo import convert_to_cogeo
-from opendm.utils import add_raster_meta_tags
+from modules import io
+from modules import log
+from modules import system
+from modules import context
+from modules import types
+from modules import gsd
+from modules.dem import commands, utils
+from modules.cropper import Cropper
+from modules import pseudogeo
+from modules.tiles.tiler import generate_dem_tiles
+from modules.cogeo import convert_to_cogeo
+from modules.utils import add_raster_meta_tags
 
 
 class ODMDEMStage(types.ODM_Stage):

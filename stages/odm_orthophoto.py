@@ -1,18 +1,18 @@
 import os
 
-from opendm import io
-from opendm import log
-from opendm import system
-from opendm import context
-from opendm import types
-from opendm import gsd
-from opendm import orthophoto
-from opendm.osfm import is_submodel
-from opendm.concurrency import get_max_memory_mb
-from opendm.cutline import compute_cutline
-from opendm.utils import double_quote
-from opendm import pseudogeo
-from opendm.multispectral import get_primary_band_name
+from modules import io
+from modules import log
+from modules import system
+from modules import context
+from modules import types
+from modules import gsd
+from modules import orthophoto
+from modules.osfm import is_submodel
+from modules.concurrency import get_max_memory_mb
+from modules.cutline import compute_cutline
+from modules.utils import double_quote
+from modules import pseudogeo
+from modules.multispectral import get_primary_band_name
 
 
 class ODMOrthoPhotoStage(types.ODM_Stage):

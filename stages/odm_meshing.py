@@ -1,13 +1,13 @@
 import os, math
 
-from opendm import log
-from opendm import io
-from opendm import system
-from opendm import context
-from opendm import mesh
-from opendm import gsd
-from opendm import types
-from opendm.dem import commands
+from modules import log
+from modules import io
+from modules import system
+from modules import context
+from modules import mesh
+from modules import gsd
+from modules import types
+from modules.dem import commands
 
 class ODMeshingStage(types.ODM_Stage):
     def process(self, args, outputs):

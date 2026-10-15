@@ -1,21 +1,21 @@
 import os
 import json
 
-from opendm import context
-from opendm import io
-from opendm import types
-from opendm.photo import PhotoCorruptedException
-from opendm import log
-from opendm import system
-from opendm.geo import GeoFile
+from modules import context
+from modules import io
+from modules import types
+from modules.photo import PhotoCorruptedException
+from modules import log
+from modules import system
+from modules.geo import GeoFile
 from shutil import copyfile
-from opendm import progress
-from opendm import boundary
-from opendm import ai
-from opendm.skyremoval.skyfilter import SkyFilter
-from opendm.bgfilter import BgFilter
-from opendm.concurrency import parallel_map
-from opendm.video.video2dataset import Parameters, Video2Dataset
+from modules import progress
+from modules import boundary
+from modules import ai
+from modules.skyremoval.skyfilter import SkyFilter
+from modules.bgfilter import BgFilter
+from modules.concurrency import parallel_map
+from modules.video.video2dataset import Video2Dataset, extract_subtitles
 
 def save_images_database(photos, database_file):
     with open(database_file, 'w') as f:
@@ -130,20 +130,14 @@ class ODMLoadDatasetStage(types.ODM_Stage):
                 if len(video_files) > 0:
                     log.INFO("Found video files (%s), extracting frames" % len(video_files))
 
+                    for f in video_files:
+                        extract_subtitles(f, overwrite=self.rerun())
+
                     try:
-                        params = Parameters({
-                            "input": video_files,
-                            "output": images_dir,
-                            
-                            "blur_threshold": 200,
-                            "distance_threshold": 10, 
-                            "black_ratio_threshold": 0.98,
-                            "pixel_black_threshold": 0.30,
-                            "use_srt": True,
-                            "max_dimension": args.video_resolution,
-                            "limit": args.video_limit,
-                        })
-                        v2d = Video2Dataset(params)
+                        v2d = Video2Dataset(input=video_files, 
+                                            output=images_dir,
+                                            max_dimension=args.video_resolution,
+                                            limit=args.video_limit)
                         frames = v2d.ProcessVideo()
 
                         with open(frames_db_file, 'w') as f:

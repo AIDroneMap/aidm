@@ -3,7 +3,7 @@ import unittest
 import os
 import shutil
 
-from opendm import camera
+from modules import camera
 
 
 class TestCamera(unittest.TestCase):

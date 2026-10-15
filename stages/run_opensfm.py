@@ -3,19 +3,19 @@ import os
 import shutil
 import glob
 
-from opendm import log
-from opendm import io
-from opendm import system
-from opendm import context
-from opendm import gsd
-from opendm import point_cloud
-from opendm import types
-from opendm.utils import get_depthmap_resolution
-from opendm.osfm import OSFMContext
-from opendm import multispectral
-from opendm import thermal
-from opendm import nvm
-from opendm.photo import find_largest_photo
+from modules import log
+from modules import io
+from modules import system
+from modules import context
+from modules import gsd
+from modules import point_cloud
+from modules import types
+from modules.utils import get_depthmap_resolution
+from modules.osfm import OSFMContext
+from modules import multispectral
+from modules import thermal
+from modules import nvm
+from modules.photo import find_largest_photo
 
 from opensfm.undistort import add_image_format_extension
 

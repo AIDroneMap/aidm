@@ -2,7 +2,7 @@ import unittest
 import os
 import shutil
 
-from opendm.photo import ODM_Photo
+from modules.photo import ODM_Photo
 
 
 class TestPhoto(unittest.TestCase):

@@ -44,7 +44,7 @@ RUN bash configure.sh installruntimedeps \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
   && bash run.sh --help \
-  && bash -c "eval $(python3 /code/opendm/context.py) && python3 -c 'from opensfm import io, pymap'"
+  && bash -c "eval $(python3 /code/modules/context.py) && python3 -c 'from opensfm import io, pymap'"
 
 # Entry point
 ENTRYPOINT ["python3", "/code/run.py"]

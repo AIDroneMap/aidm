@@ -1,11 +1,11 @@
 import os
 
-from opendm import io
-from opendm import log
-from opendm import types
-from opendm.utils import copy_paths, get_processing_results_paths
-from opendm.ogctiles import build_3dtiles
-from opendm.gltf import obj2glb
+from modules import io
+from modules import log
+from modules import types
+from modules.utils import copy_paths, get_processing_results_paths
+from modules.ogctiles import build_3dtiles
+from modules.gltf import obj2glb
 
 class ODMPostProcess(types.ODM_Stage):
     def process(self, args, outputs):

@@ -2,7 +2,7 @@ import time
 import unittest
 import threading
 import random
-from opendm.remote import LocalRemoteExecutor, Task, NodeTaskLimitReachedException
+from modules.remote import LocalRemoteExecutor, Task, NodeTaskLimitReachedException
 from pyodm import Node, exceptions
 from pyodm.types import TaskStatus
 

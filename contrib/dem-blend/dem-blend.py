@@ -8,7 +8,7 @@ import sys
 sys.path.insert(0, os.path.join("..", "..", os.path.dirname(__file__)))
 
 import argparse
-from opendm.dem import merge
+from modules.dem import merge
 
 parser = argparse.ArgumentParser(description='Merge and blend DEMs using ODX\'s approach.')
 parser.add_argument('input_dems',

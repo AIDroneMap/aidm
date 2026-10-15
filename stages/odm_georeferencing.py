@@ -10,19 +10,19 @@ import math
 from collections import OrderedDict
 from pyproj import CRS
 
-from opendm import io
-from opendm import log
-from opendm import types
-from opendm import system
-from opendm import context
-from opendm import location
-from opendm.cropper import Cropper
-from opendm import point_cloud
-from opendm.multispectral import get_primary_band_name
-from opendm.osfm import OSFMContext
-from opendm.boundary import as_polygon, export_to_bounds_files
-from opendm.align import compute_alignment_matrix, transform_point_cloud, transform_obj
-from opendm.utils import np_to_json
+from modules import io
+from modules import log
+from modules import types
+from modules import system
+from modules import context
+from modules import location
+from modules.cropper import Cropper
+from modules import point_cloud
+from modules.multispectral import get_primary_band_name
+from modules.osfm import OSFMContext
+from modules.boundary import as_polygon, export_to_bounds_files
+from modules.align import compute_alignment_matrix, transform_point_cloud, transform_obj
+from modules.utils import np_to_json
 
 class ODMGeoreferencingStage(types.ODM_Stage):
     def process(self, args, outputs):

@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join("..", "..", os.path.dirname(__file__)))
 
 import argparse
 import multiprocessing
-from opendm.dem import commands
+from modules.dem import commands
 
 parser = argparse.ArgumentParser(description='Generate DEMs from point clouds using ODX\'s algorithm.')
 parser.add_argument('point_cloud',
