@@ -1,5 +1,5 @@
 import unittest
-from opendm import types
+from modules import types
 
 class ODMPhotoMock:
     def __init__(self, filename, band_name, band_index):

@@ -44,7 +44,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 Source: "contrib\*"; DestDir: "{app}\contrib"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "opendm\*"; DestDir: "{app}\opendm"; Excludes: "__pycache__"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "modules\*"; DestDir: "{app}\modules"; Excludes: "__pycache__"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "stages\*"; DestDir: "{app}\stages"; Excludes: "__pycache__"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "SuperBuild\install\bin\*"; DestDir: "{app}\SuperBuild\install\bin"; Excludes: "__pycache__"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "SuperBuild\install\lib\python3.12\*"; DestDir: "{app}\SuperBuild\install\lib\python3.12"; Excludes: "__pycache__"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -157,6 +157,6 @@ end;
 Type: filesandordirs; Name: "{app}\SuperBuild"
 Type: filesandordirs; Name: "{app}\contrib"
 Type: filesandordirs; Name: "{app}\licenses"
-Type: filesandordirs; Name: "{app}\opendm"
+Type: filesandordirs; Name: "{app}\modules"
 Type: filesandordirs; Name: "{app}\stages"
 Type: filesandordirs; Name: "{app}\venv"

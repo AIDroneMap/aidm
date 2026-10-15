@@ -1,13 +1,13 @@
 import os
 
-from opendm import log
-from opendm import io
-from opendm import system
-from opendm import context
-from opendm import point_cloud
-from opendm import types
-from opendm import gsd
-from opendm.boundary import boundary_offset, compute_boundary_from_shots
+from modules import log
+from modules import io
+from modules import system
+from modules import context
+from modules import point_cloud
+from modules import types
+from modules import gsd
+from modules.boundary import boundary_offset, compute_boundary_from_shots
 
 class ODMFilterPoints(types.ODM_Stage):
     def process(self, args, outputs):

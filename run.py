@@ -7,13 +7,13 @@ if sys.version_info.major < 3:
     sys.exit(1)
 
 import os
-from opendm import log
-from opendm import config
-from opendm import system
-from opendm import io
-from opendm.progress import progressbc
-from opendm.utils import get_processing_results_paths, rm_r
-from opendm.arghelpers import args_to_dict, save_opts, find_rerun_stage
+from modules import log
+from modules import config
+from modules import system
+from modules import io
+from modules.progress import progressbc
+from modules.utils import get_processing_results_paths, rm_r
+from modules.arghelpers import args_to_dict, save_opts, find_rerun_stage
 
 from stages.odm_app import ODMApp
 

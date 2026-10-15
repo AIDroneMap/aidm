@@ -1,13 +1,13 @@
 import os, shutil
 
-from opendm import log
-from opendm import io
-from opendm import system
-from opendm import context
-from opendm import types
-from opendm.multispectral import get_primary_band_name
-from opendm.photo import find_largest_photo_dim
-from opendm.objpacker import obj_pack
+from modules import log
+from modules import io
+from modules import system
+from modules import context
+from modules import types
+from modules.multispectral import get_primary_band_name
+from modules.photo import find_largest_photo_dim
+from modules.objpacker import obj_pack
 
 class ODMMvsTexStage(types.ODM_Stage):
     def process(self, args, outputs):

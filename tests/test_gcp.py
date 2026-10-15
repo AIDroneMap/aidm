@@ -3,7 +3,7 @@ import unittest
 import os
 import shutil
 
-from opendm.gcp import GCPFile
+from modules.gcp import GCPFile
 
 
 class TestGcp(unittest.TestCase):

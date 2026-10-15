@@ -1,7 +1,7 @@
 import unittest
 import os
-from opendm.osfm import get_submodel_argv, get_submodel_args_dict
-from opendm import config
+from modules.osfm import get_submodel_argv, get_submodel_args_dict
+from modules import config
 
 class TestOSFM(unittest.TestCase):
     def setUp(self):

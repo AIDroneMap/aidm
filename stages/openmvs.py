@@ -1,16 +1,16 @@
 import shutil, os, glob, math, sys
 
-from opendm import log
-from opendm import io
-from opendm import system
-from opendm import context
-from opendm import point_cloud
-from opendm import types
-from opendm.gpu import has_gpu
-from opendm.utils import get_depthmap_resolution
-from opendm.osfm import OSFMContext
-from opendm.multispectral import get_primary_band_name
-from opendm.point_cloud import fast_merge_ply
+from modules import log
+from modules import io
+from modules import system
+from modules import context
+from modules import point_cloud
+from modules import types
+from modules.gpu import has_gpu
+from modules.utils import get_depthmap_resolution
+from modules.osfm import OSFMContext
+from modules.multispectral import get_primary_band_name
+from modules.point_cloud import fast_merge_ply
 
 class ODMOpenMVSStage(types.ODM_Stage):
     def process(self, args, outputs):
