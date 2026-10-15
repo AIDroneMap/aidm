@@ -15,7 +15,7 @@ from opendm import ai
 from opendm.skyremoval.skyfilter import SkyFilter
 from opendm.bgfilter import BgFilter
 from opendm.concurrency import parallel_map
-from opendm.video.video2dataset import Parameters, Video2Dataset
+from opendm.video.video2dataset import Video2Dataset, extract_subtitles
 
 def save_images_database(photos, database_file):
     with open(database_file, 'w') as f:
@@ -131,19 +131,10 @@ class ODMLoadDatasetStage(types.ODM_Stage):
                     log.INFO("Found video files (%s), extracting frames" % len(video_files))
 
                     try:
-                        params = Parameters({
-                            "input": video_files,
-                            "output": images_dir,
-                            
-                            "blur_threshold": 200,
-                            "distance_threshold": 10, 
-                            "black_ratio_threshold": 0.98,
-                            "pixel_black_threshold": 0.30,
-                            "use_srt": True,
-                            "max_dimension": args.video_resolution,
-                            "limit": args.video_limit,
-                        })
-                        v2d = Video2Dataset(params)
+                        v2d = Video2Dataset(input=video_files, 
+                                            output=images_dir,
+                                            max_dimension=args.video_resolution,
+                                            limit=args.video_limit)
                         frames = v2d.ProcessVideo()
 
                         with open(frames_db_file, 'w') as f:

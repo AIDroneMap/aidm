@@ -5,42 +5,42 @@ from math import ceil, floor
 import time
 import cv2
 import os
+import sys
+import zipfile
 import collections
+import platform
 from PIL import Image
 import numpy as np
 import piexif
+from opendm import system
 from opendm import log
+from opendm.net import download
 from opendm.video.srtparser import SrtFileParser
-from opendm.video.parameters import Parameters
-from opendm.video.checkers import BlackFrameChecker, SimilarityChecker, ThresholdBlurChecker
+from opendm.video.gpxparser import GpxFileParser, get_video_start_time
 
 class Video2Dataset:
-
-    def __init__(self, parameters : Parameters):
-        self.parameters = parameters
-
-        self.blur_checker = ThresholdBlurChecker(parameters.blur_threshold) if parameters.blur_threshold is not None else None
-        self.similarity_checker = SimilarityChecker(parameters.distance_threshold) if parameters.distance_threshold is not None else None
-        self.black_checker = BlackFrameChecker(parameters.black_ratio_threshold, parameters.pixel_black_threshold) if parameters.black_ratio_threshold is not None or parameters.pixel_black_threshold is not None else None
-
-        self.frame_index = parameters.start
-        self.f = None
-
+    def __init__(self, input, output, max_dimension=None, limit=None, use_loc_parsers=True):
+        self.frame_index = 0
+        self.input = input
+        self.output = output
+        self.max_dimension = max_dimension
+        self.limit = limit
+        self.use_loc_parsers = use_loc_parsers
+        self.internal_resolution = 512
+        self.frame_format = 'jpg'
 
     def ProcessVideo(self):
+        if not os.path.exists(self.output):
+            os.makedirs(self.output)
+
         self.date_now = None
         start = time.time()
 
-        if (self.parameters.stats_file is not None):
-            self.f = open(self.parameters.stats_file, "w")
-            self.f.write("global_idx;file_name;frame_index;blur_score;is_blurry;is_black;last_frame_index;similarity_score;is_similar;written\n")
-
         self.global_idx = 0
-
         output_file_paths = []
         
         # foreach input file
-        for input_file in self.parameters.input:
+        for input_file in self.input:
             # get file name
             file_name = os.path.basename(input_file)
             log.INFO("Processing video: {}".format(input_file))
@@ -60,35 +60,42 @@ class Video2Dataset:
             
             log.INFO("Use pseudo start time: %s" % self.date_now)
 
-            if self.parameters.use_srt:
+            if self.use_loc_parsers:
 
                 name = os.path.splitext(input_file)[0]
 
                 srt_files = [name + ".srt", name + ".SRT"]
-                srt_parser = None
+                loc_parser = None
 
                 for srt_file in srt_files:
                     if os.path.exists(srt_file):
                         log.INFO("Loading SRT file: {}".format(srt_file))
                         try:
-                            srt_parser = SrtFileParser(srt_file)
-                            srt_parser.parse()
+                            loc_parser = SrtFileParser(srt_file)
+                            loc_parser.parse()
                             break
                         except Exception as e:
                             log.INFO("Error parsing SRT file: {}".format(e))
-                            srt_parser = None
-            else:
-                srt_parser = None
+                            loc_parser = None
 
-            if (self.black_checker is not None and self.black_checker.NeedPreProcess()):
-                start2 = time.time()
-                log.INFO("Preprocessing for black frame checker... this might take a bit")
-                self.black_checker.PreProcess(input_file, self.parameters.start, self.parameters.end)
-                end = time.time()
-                log.INFO("Preprocessing time: {:.2f}s".format(end - start2))
-                log.INFO("Calculated luminance_range_size is {}".format(self.black_checker.luminance_range_size))
-                log.INFO("Calculated luminance_minimum_value is {}".format(self.black_checker.luminance_minimum_value))
-                log.INFO("Calculated absolute_threshold is {}".format(self.black_checker.absolute_threshold))
+                if loc_parser is None:
+                    gpx_files = [name + ".gpx", name + ".GPX"]
+
+                    for gpx_file in gpx_files:
+                        if os.path.exists(gpx_file):
+                            log.INFO("Loading GPX file: {}".format(gpx_file))
+                            try:
+                                loc_parser = GpxFileParser(gpx_file, get_video_start_time(input_file))
+                                loc_parser.parse()
+                                break
+                            except Exception as e:
+                                log.INFO("Error parsing GPX file: {}".format(e))
+                                loc_parser = None
+            else:
+                loc_parser = None
+
+            start2 = time.time()
+            
 
             # open video file
             cap = cv2.VideoCapture(input_file)
@@ -96,107 +103,100 @@ class Video2Dataset:
                 log.INFO("Error opening video stream or file")
                 return
 
-            if (self.parameters.start is not None):
-                cap.set(cv2.CAP_PROP_POS_FRAMES, self.parameters.start)
-                self.frame_index = self.parameters.start
-                start_frame = self.parameters.start
-            else:
-                start_frame = 0
+            self.frames_memory = []
+            frame_index = 0
+            frame_end = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            frames_to_process = video_info.total_frames
+            sharpness_window_size = max(round(video_info.frame_rate / 4.0), 1)
+            sharpness_window = []
 
-            frames_to_process = self.parameters.end - start_frame + 1 if (self.parameters.end is not None) else video_info.total_frames - start_frame
-
-            progress = 0
+            progress = prev_progress = 0
             while (cap.isOpened()):
                 ret, frame = cap.read()
 
                 if not ret:
                     break
 
-                if (self.parameters.end is not None and self.frame_index > self.parameters.end):
-                    break
-
                 # Calculate progress percentage
-                prev_progress = progress
-                progress = floor((self.frame_index - start_frame + 1) / frames_to_process * 100)
-                if progress != prev_progress:
-                    print("[{}][{:3d}%] Processing frame {}/{}: ".format(file_name, progress, self.frame_index - start_frame + 1, frames_to_process), end="\r")
+                progress = floor((self.frame_index + 1) / frames_to_process * 100)
+                if abs(progress - prev_progress) >= 1:
+                    prev_progress = progress
+                    print("[{}][{:3d}%] Processing frame {}/{}: ".format(file_name, progress, self.frame_index + 1, frames_to_process), end="\r")
 
-                stats = self.ProcessFrame(frame, video_info, srt_parser)
 
-                if stats is not None and self.parameters.stats_file is not None:
-                    self.WriteStats(input_file, stats)
+                frame_bw = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-                # Add element to array
-                if stats is not None and "written" in stats.keys():
-                    output_file_paths.append(stats["path"])
+                h, w = frame_bw.shape
+                resolution = self.internal_resolution
+                if resolution < w or resolution < h:
+                    m = max(w, h)
+                    factor = resolution / m
+                    frame_bw = cv2.resize(frame_bw, (int(ceil(w * factor)), int(ceil(h * factor))), interpolation=cv2.INTER_AREA)
+
+                sharpness_window.append((self.frame_index, self.CalculateSharpness(frame_bw), frame, frame_bw))
+                self.frame_index += 1
+
+                if len(sharpness_window) >= sharpness_window_size:
+                    output_file_paths.extend(self.ProcessFrame(sharpness_window, video_info, loc_parser))
+                    sharpness_window = []
+
+            if sharpness_window:
+                output_file_paths.extend(self.ProcessFrame(sharpness_window, video_info, loc_parser))
 
             cap.release()
 
-        if self.f is not None:
-            self.f.close()
-
-        if self.parameters.limit is not None and self.parameters.limit > 0 and self.global_idx >= self.parameters.limit:
-            log.INFO("Limit of {} frames reached, trimming dataset".format(self.parameters.limit))
-            output_file_paths = limit_files(output_file_paths, self.parameters.limit)
+        if self.limit is not None and self.limit > 0 and self.global_idx >= self.limit:
+            log.INFO("Limit of {} frames reached, trimming dataset".format(self.limit))
+            output_file_paths = limit_files(output_file_paths, self.limit)
 
         end = time.time()
         log.INFO("Total processing time: {:.2f}s".format(end - start))
         return output_file_paths
 
+    def CalculateSharpness(self, frame_bw):
+        return cv2.Laplacian(frame_bw, cv2.CV_64F).var()
 
-    def ProcessFrame(self, frame, video_info, srt_parser):
+    def IsBlack(self, frame_bw, picture_black_ratio_th=0.98, pixel_black_th=0.30):
+        abs_thresh = pixel_black_th * 255
+        nb_black_pixels = np.sum(frame_bw < abs_thresh)
+        ratio_black_pixels = nb_black_pixels / (frame_bw.shape[0] * frame_bw.shape[1])
+        return ratio_black_pixels >= picture_black_ratio_th
+        
+    def ProcessFrame(self, frames, video_info, loc_parser):
+        frame_index, _, frame, frame_bw = max(frames, key=lambda frame_data: frame_data[1])
 
-        res = {"frame_index": self.frame_index, "global_idx": self.global_idx}
+        if self.IsBlack(frame_bw):
+            return []
 
-        frame_bw = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Check for duplicates
+        small = cv2.resize(frame_bw, (9, 8), interpolation=cv2.INTER_AREA)
+        diff = small[:, 1:] > small[:, :-1]
+        frame_key = np.packbits(diff.flatten())
 
-        h, w = frame_bw.shape
-        resolution = self.parameters.internal_resolution
-        if resolution < w or resolution < h:
-            m = max(w, h)
-            factor = resolution / m
-            frame_bw = cv2.resize(frame_bw, (int(ceil(w * factor)), int(ceil(h * factor))), interpolation=cv2.INTER_NEAREST)
+        is_duplicate = False
+        for past_key in self.frames_memory:
+            hamming_distance = np.count_nonzero(frame_key != past_key)
+            if hamming_distance <= 2: # small tolerance, higher = more tolerant, 0 = exact
+                is_duplicate = True
+                break
 
-        if (self.blur_checker is not None):
-            blur_score, is_blurry = self.blur_checker.IsBlur(frame_bw, self.frame_index)
-            res["blur_score"] = blur_score
-            res["is_blurry"] = is_blurry
+        if is_duplicate:
+            return []
 
-            if is_blurry:
-                # print ("blurry, skipping")
-                self.frame_index += 1
-                return res
+        self.frames_memory.append(frame_key)
+        if len(self.frames_memory) > 10:
+            self.frames_memory.pop(0)
 
-        if (self.black_checker is not None):
-            is_black = self.black_checker.IsBlack(frame_bw, self.frame_index)
-            res["is_black"] = is_black
-
-            if is_black:
-                # print ("black, skipping")
-                self.frame_index += 1
-                return res
-
-        if (self.similarity_checker is not None):
-            similarity_score, is_similar, last_frame_index = self.similarity_checker.IsSimilar(frame_bw, self.frame_index)
-            res["similarity_score"] = similarity_score
-            res["is_similar"] = is_similar
-            res["last_frame_index"] = last_frame_index
-
-            if is_similar:
-                # print ("similar to {}, skipping".format(self.similarity_checker.last_image_id))
-                self.frame_index += 1
-                return res
-
-        path = self.SaveFrame(frame, video_info, srt_parser)
-        res["written"] = True
-        res["path"] = path
-        self.frame_index += 1
+        current_frame_index = self.frame_index
+        self.frame_index = frame_index
+        path = self.SaveFrame(frame, video_info, loc_parser)
+        self.frame_index = current_frame_index
         self.global_idx += 1
+        return [path]
 
-        return res
 
-    def SaveFrame(self, frame, video_info, srt_parser: SrtFileParser):
-        max_dim = self.parameters.max_dimension
+    def SaveFrame(self, frame, video_info, loc_parser: SrtFileParser):
+        max_dim = self.max_dimension
         if max_dim is not None:
             h, w, _ = frame.shape
             if max_dim < w or max_dim < h:
@@ -204,10 +204,10 @@ class Video2Dataset:
                 factor = max_dim / m
                 frame = cv2.resize(frame, (int(ceil(w * factor)), int(ceil(h * factor))), interpolation=cv2.INTER_AREA)
 
-        path = os.path.join(self.parameters.output,
-            "{}_{}_{}.{}".format(video_info.basename, self.global_idx, self.frame_index, self.parameters.frame_format))
+        path = os.path.join(self.output,
+            "{}_{}_{}.{}".format(video_info.basename, self.global_idx, self.frame_index, self.frame_format))
 
-        _, buf = cv2.imencode('.' + self.parameters.frame_format, frame)
+        _, buf = cv2.imencode('.' + self.frame_format, frame)
 
         delta = datetime.timedelta(seconds=(self.frame_index / video_info.frame_rate))
         elapsed_time = datetime.datetime(1900, 1, 1) + delta
@@ -215,9 +215,9 @@ class Video2Dataset:
         img = Image.open(io.BytesIO(buf))
         
         entry = gps_coords = None
-        if srt_parser is not None:
-            entry = srt_parser.get_entry(elapsed_time)
-            gps_coords = srt_parser.get_gps(elapsed_time)
+        if loc_parser is not None:
+            entry = loc_parser.get_entry(elapsed_time)
+            gps_coords = loc_parser.get_gps(elapsed_time)
 
         exif_time = (elapsed_time + (self.date_now - datetime.datetime(1900, 1, 1)))
         elapsed_time_str = exif_time.strftime("%Y:%m:%d %H:%M:%S")
@@ -227,12 +227,12 @@ class Video2Dataset:
         # Set the EXIF metadata
         exif_dict = {
             "0th": {
-                piexif.ImageIFD.Software: "ODX",
+                piexif.ImageIFD.Software: "LGT",
                 piexif.ImageIFD.DateTime: elapsed_time_str,
                 piexif.ImageIFD.XResolution: (frame.shape[1], 1),
                 piexif.ImageIFD.YResolution: (frame.shape[0], 1),
                 piexif.ImageIFD.Make: "DJI" if video_info.basename.lower().startswith("dji") else "Unknown",
-                piexif.ImageIFD.Model: "Unknown"
+                piexif.ImageIFD.Model: "VideoFrame"
             },
             "Exif": {
                 piexif.ExifIFD.DateTimeOriginal: elapsed_time_str,
@@ -259,20 +259,6 @@ class Video2Dataset:
         img.save(path, exif=exif_bytes, quality=95)
 
         return path
-
-
-    def WriteStats(self, input_file, stats):
-        self.f.write("{};{};{};{};{};{};{};{};{};{}\n".format(
-            stats["global_idx"],
-            input_file,
-            stats["frame_index"],
-            stats["blur_score"] if "blur_score" in stats else "",
-            stats["is_blurry"] if "is_blurry" in stats else "",
-            stats["is_black"] if "is_black" in stats else "",
-            stats["last_frame_index"] if "last_frame_index" in stats else "",
-            stats["similarity_score"] if "similarity_score" in stats else "",
-            stats["is_similar"] if "is_similar" in stats else "",
-            stats["written"] if "written" in stats else "").replace(".", ","))
 
 
 def get_video_info(input_file):
@@ -304,7 +290,8 @@ def limit_files(paths, limit):
     to_keep = list(p[keep_idxes])
 
     for idx in remove_idxes:
-        os.remove(paths[idx])
+        if os.path.isfile(paths[idx]):
+            os.remove(paths[idx])
 
     return to_keep
 
@@ -349,3 +336,76 @@ def get_gps_location(elapsed_time, lat, lng, altitude):
             gps_ifd[piexif.GPSIFD.GPSAltitude] = float_to_rational(round(altitude * 1000) / 1000)
 
     return gps_ifd
+
+def extract_subtitles(video_file, overwrite=False):
+    base, ext = os.path.splitext(video_file)
+    srt_file = base + '.srt'
+
+    if os.path.isfile(srt_file) and not overwrite:
+        return
+
+    ffmpeg_bin = get_ffmpeg()
+    if ffmpeg_bin is None:
+        log.WARNING("Cannot extract subtitles, no ffmpeg")
+        return
+
+    try:
+        system.run(f'"{ffmpeg_bin}" -i "{video_file}" -map 0:s:0 "{srt_file}" -y -hide_banner -loglevel panic')
+    except:
+        log.INFO(f"No subtitles found in {os.path.basename(video_file)}")
+
+    if os.path.isfile(srt_file):
+        log.INFO(f"Extracted subtitles to {srt_file}")
+
+def get_ffmpeg(version = '7.0.2'):
+    base_dir = os.path.join(os.path.dirname(__file__), "..", "..")
+    if sys.platform == 'win32':
+        base_dir = os.path.join(os.getenv('PROGRAMDATA'),"LGT")
+    base_dir = os.path.join(os.path.abspath(base_dir), "storage", "binaries")
+    
+    if not os.path.isdir(base_dir):
+        os.makedirs(base_dir, exist_ok=True)
+    
+    machine = platform.machine().lower()
+    url = f"https://github.com/pierotofy/photogrammetry-tools/releases/download/v1.0.0/ffmpeg-{version}-amd64.zip"
+    
+    if "arm" in machine:
+        url = f"https://github.com/pierotofy/photogrammetry-tools/releases/download/v1.0.0/ffmpeg-{version}-arm64.zip"
+
+    # Check if we need to download it
+    ffmpeg_bin = os.path.join(base_dir, "ffmpeg")
+    if not os.path.isfile(ffmpeg_bin):
+        log.INFO("Downloading ffmpeg from %s ..." % url)
+
+        last_update = 0
+
+        def callback(progress):
+            nonlocal last_update
+
+            time_has_elapsed = time.time() - last_update >= 2
+
+            if time_has_elapsed or int(progress) == 100:
+                log.INFO("Downloading: %s%%" % int(progress))
+                last_update = time.time()
+
+        try:
+            downloaded_file = download(url, base_dir, progress_callback=callback)
+        except Exception as e:
+            log.WARNING("Cannot download %s: %s" % (url, str(e)))
+            return None
+
+        if os.path.basename(downloaded_file).lower().endswith(".zip"):
+            log.INFO("Extracting %s ..." % downloaded_file)
+            with zipfile.ZipFile(downloaded_file, 'r') as z:
+                z.extractall(base_dir)
+            os.remove(downloaded_file)
+        
+        if not os.path.isfile(ffmpeg_bin):
+            log.WARNING("Cannot find %s (is the URL correct?)" % ffmpeg_bin)
+            return None
+        else:
+            if not os.access(ffmpeg_bin, os.X_OK):
+                os.chmod(ffmpeg_bin, 0o755)
+            return ffmpeg_bin
+    else:
+        return ffmpeg_bin
