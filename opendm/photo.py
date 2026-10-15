@@ -398,12 +398,14 @@ class ODM_Photo:
 
                     # Phantom 4 RTK
                     if '@drone-dji:RtkStdLon' in xtags:
-                        y = float(self.get_xmp_tag(xtags, '@drone-dji:RtkStdLon'))
-                        x = float(self.get_xmp_tag(xtags, '@drone-dji:RtkStdLat'))
-                        self.gps_xy_stddev = max(x, y)
-                    
-                        if '@drone-dji:RtkStdHgt' in xtags:
-                            self.gps_z_stddev = float(self.get_xmp_tag(xtags, '@drone-dji:RtkStdHgt'))
+                        rtk_flag = self.get_xmp_tag(xtags, '@drone-dji:RtkFlag')
+                        if rtk_flag is None or int(float(rtk_flag)) == 50: # 50 = RTK fixed
+                            y = float(self.get_xmp_tag(xtags, '@drone-dji:RtkStdLon'))
+                            x = float(self.get_xmp_tag(xtags, '@drone-dji:RtkStdLat'))
+                            self.gps_xy_stddev = max(x, y)
+
+                            if '@drone-dji:RtkStdHgt' in xtags:
+                                self.gps_z_stddev = float(self.get_xmp_tag(xtags, '@drone-dji:RtkStdHgt'))
                     else:
                         self.set_attr_from_xmp_tag('gps_xy_stddev', xtags, [
                             '@Camera:GPSXYAccuracy',
