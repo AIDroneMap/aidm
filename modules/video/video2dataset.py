@@ -358,8 +358,11 @@ def extract_subtitles(video_file, overwrite=False):
         log.INFO(f"Extracted subtitles to {srt_file}")
 
 def get_ffmpeg(version = '7.0.2'):
+    is_windows = sys.platform == 'win32'
+    exe_name = "ffmpeg.exe" if is_windows else "ffmpeg"
+
     base_dir = os.path.join(os.path.dirname(__file__), "..", "..")
-    if sys.platform == 'win32':
+    if is_windows:
         base_dir = os.path.join(os.getenv('PROGRAMDATA'),"ODX")
     base_dir = os.path.join(os.path.abspath(base_dir), "storage", "binaries")
     
@@ -372,11 +375,11 @@ def get_ffmpeg(version = '7.0.2'):
     if "arm" in machine:
         url = f"https://github.com/pierotofy/photogrammetry-tools/releases/download/v1.0.0/ffmpeg-{version}-arm64.zip"
 
-    if sys.platform == 'win32':
+    if is_windows:
         url = f"https://github.com/pierotofy/photogrammetry-tools/releases/download/v1.0.0/ffmpeg-{version}-win64.zip"
 
     # Check if we need to download it
-    ffmpeg_bin = os.path.join(base_dir, "ffmpeg")
+    ffmpeg_bin = os.path.join(base_dir, exe_name)
     if not os.path.isfile(ffmpeg_bin):
         log.INFO("Downloading ffmpeg from %s ..." % url)
 
@@ -406,7 +409,7 @@ def get_ffmpeg(version = '7.0.2'):
         if not os.path.isfile(ffmpeg_bin):
             log.WARNING("Cannot find %s (is the URL correct?)" % ffmpeg_bin)
             return None
-        else:
+        elif not is_windows:
             if not os.access(ffmpeg_bin, os.X_OK):
                 os.chmod(ffmpeg_bin, 0o755)
             return ffmpeg_bin
