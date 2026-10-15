@@ -130,6 +130,9 @@ class ODMLoadDatasetStage(types.ODM_Stage):
                 if len(video_files) > 0:
                     log.INFO("Found video files (%s), extracting frames" % len(video_files))
 
+                    for f in video_files:
+                        extract_subtitles(f, overwrite=self.rerun())
+
                     try:
                         v2d = Video2Dataset(input=video_files, 
                                             output=images_dir,

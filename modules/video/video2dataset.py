@@ -227,7 +227,7 @@ class Video2Dataset:
         # Set the EXIF metadata
         exif_dict = {
             "0th": {
-                piexif.ImageIFD.Software: "LGT",
+                piexif.ImageIFD.Software: "ODX",
                 piexif.ImageIFD.DateTime: elapsed_time_str,
                 piexif.ImageIFD.XResolution: (frame.shape[1], 1),
                 piexif.ImageIFD.YResolution: (frame.shape[0], 1),
@@ -360,7 +360,7 @@ def extract_subtitles(video_file, overwrite=False):
 def get_ffmpeg(version = '7.0.2'):
     base_dir = os.path.join(os.path.dirname(__file__), "..", "..")
     if sys.platform == 'win32':
-        base_dir = os.path.join(os.getenv('PROGRAMDATA'),"LGT")
+        base_dir = os.path.join(os.getenv('PROGRAMDATA'),"ODX")
     base_dir = os.path.join(os.path.abspath(base_dir), "storage", "binaries")
     
     if not os.path.isdir(base_dir):
@@ -371,6 +371,9 @@ def get_ffmpeg(version = '7.0.2'):
     
     if "arm" in machine:
         url = f"https://github.com/pierotofy/photogrammetry-tools/releases/download/v1.0.0/ffmpeg-{version}-arm64.zip"
+
+    if sys.platform == 'win32':
+        url = f"https://github.com/pierotofy/photogrammetry-tools/releases/download/v1.0.0/ffmpeg-{version}-win64.zip"
 
     # Check if we need to download it
     ffmpeg_bin = os.path.join(base_dir, "ffmpeg")
