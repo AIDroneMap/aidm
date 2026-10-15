@@ -103,6 +103,10 @@ class ODMOpenMVSStage(types.ODM_Stage):
                                         openmvs_scene_file,
                                         ' '.join(config + gpu_config + extra_config)))
             
+            if os.getenv("ODX_LOW_MEMORY"):
+                pc_tile = True
+                config.append("--fusion-mode 1")
+
             try:
                 run_densify()
             except system.SubprocessException as e:
