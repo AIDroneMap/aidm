@@ -409,9 +409,8 @@ def get_ffmpeg(version = '7.0.2'):
         if not os.path.isfile(ffmpeg_bin):
             log.WARNING("Cannot find %s (is the URL correct?)" % ffmpeg_bin)
             return None
-        elif not is_windows:
-            if not os.access(ffmpeg_bin, os.X_OK):
-                os.chmod(ffmpeg_bin, 0o755)
-            return ffmpeg_bin
+        if not is_windows and not os.access(ffmpeg_bin, os.X_OK):
+            os.chmod(ffmpeg_bin, 0o755)
+        return ffmpeg_bin
     else:
         return ffmpeg_bin
