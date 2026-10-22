@@ -162,7 +162,7 @@ def config(argv=None, parser=None):
 
     if parser is None:
         parser = argparse.ArgumentParser(
-            description='ODX is a free and open source photogrammetry engine used to generate maps, point clouds, 3D models and DEMs from aerial and ground images. https://github.com/WebODM/ODX',
+            description='AIDM is a free and open source photogrammetry engine that turns aerial and ground images into maps, point clouds, 3D models and DEMs. It is based on ODX. https://github.com/AIDroneMap/aidm',
             usage='%s [options] <dataset name>' % usage_bin)
 
         # Load defaults from settings.yaml
@@ -765,7 +765,7 @@ def config(argv=None, parser=None):
 
     parser.add_argument('--version',
                         action='version',
-                        version='ODX {0}'.format(__version__),
+                        version=log.get_version_string(),
                         help='Displays version number and exits. ')
 
     parser.add_argument('--video-limit',
@@ -912,7 +912,7 @@ def config(argv=None, parser=None):
     # check that the project path setting has been set properly
     if not args.project_path:
         log.ERROR('You need to set the project path in the '
-                      'settings.yaml file before you can run ODM, '
+                      'settings.yaml file before you can run AIDM, '
                       'or use `--project-path <path>`. Run `python3 '
                       'run.py --help` for more information. ')
         sys.exit(1)

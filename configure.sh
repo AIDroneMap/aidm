@@ -11,7 +11,7 @@ check_version(){
       ;;
     *)
       echo "You are not on a supported Ubuntu version (detected: $UBUNTU_VERSION)"
-      echo "It might be possible to run ODX on a newer version of Ubuntu, however, you cannot rely on this script."
+      echo "AIDM might run on a newer version of Ubuntu, but this script does not support it."
       exit 1
       ;;
   esac

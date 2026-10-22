@@ -24,7 +24,7 @@ if [ "$1" = "--setup" ]; then
     echo "$2:x:14871::::::" >> /etc/shadow
     echo "$2   ALL=(ALL)   NOPASSWD:ALL" >> /etc/sudoers
     echo "odx   ALL=(ALL)   NOPASSWD:ALL" >> /etc/sudoers
-    echo "echo '' && echo '' && echo '' && echo '###################################' && echo 'ODX Dev Environment Ready. Hack on!' && echo '###################################' && echo '' && cd /code" > $HOME/.bashrc
+    echo "echo '' && echo '' && echo '' && echo '###################################' && echo 'AIDM Dev Environment Ready. Hack on!' && echo '###################################' && echo '' && cd /code" > $HOME/.bashrc
 
     # Install qt creator
     if hash qtcreator 2>/dev/null; then
@@ -105,8 +105,8 @@ if [ -z "$DATA" ]; then
     echo "Usage: DATA=/path/to/datasets [VARS] $0"
     echo
     echo "VARS:"
-    echo "	DATA	Path to directory that contains datasets for testing. The directory will be mounted in /datasets. If you don't have any, simply set it to a folder outside the ODX repository."
-    echo "	PORT	Port to expose for NodeODX (default: $PORT)"
+    echo "	DATA	Path to directory that contains datasets for testing. The directory will be mounted in /datasets. If you don't have any, simply set it to a folder outside the AIDM repository."
+    echo "	PORT	Port to expose for AIDM API (default: $PORT)"
     echo "	IMAGE	Docker image to use (default: $IMAGE)"
     echo "	GPU	Enable GPU support (default: $GPU)"
     echo "	QTC	When set to YES, installs QT Creator for C++ development (default: $QTC)"

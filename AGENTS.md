@@ -26,7 +26,7 @@ AIDM is the engine only. Scheduling, cloud provider connectors and the web inter
 | `settings.yaml` | Default settings |
 | `docs/` | Documentation; specs go in `docs/specs/`, decisions in `docs/adr/` |
 
-Windows and macOS files inherited from ODX (`*.bat`, `innosetup.iss`, `configure_macos.sh`, `portable.Dockerfile`, `vcpkg*`) are not maintained. Do not edit them; they will be removed.
+Windows and macOS builds inherited from ODX are not maintained. Their files were removed in 0.1.0, except `configure.py`, which is kept for now. Do not edit it.
 
 ## Workflow
 

@@ -30,10 +30,21 @@ else:
 
 lock = threading.Lock()
 
+def read_root_file(name):
+    with open(os.path.join(os.path.dirname(__file__), "..", name)) as f:
+        return f.read().split("\n")[0].strip()
+
 @lru_cache(maxsize=None)
 def get_version():
-    with open(os.path.join(os.path.dirname(__file__), "..", "VERSION")) as f:
-        return f.read().split("\n")[0].strip()
+    return read_root_file("VERSION")
+
+@lru_cache(maxsize=None)
+def get_upstream_version():
+    return read_root_file("UPSTREAM_VERSION")
+
+def get_version_string():
+    # The name and version users see, for example "AIDM 0.1.0 (ODX 3.8.4)"
+    return "AIDM %s (%s)" % (get_version(), get_upstream_version())
 
 def memory():
     mem = virtual_memory()
@@ -64,8 +75,9 @@ class Logger:
         self.json_output_file = output_files[0]
         self.json = {}
         self.json['odmVersion'] = get_version() # deprecated
-        self.json['engine'] = 'ODX'
+        self.json['engine'] = 'AIDM'
         self.json['version'] = get_version()
+        self.json['upstreamVersion'] = get_upstream_version()
         self.json['memory'] = memory()
         self.json['cpus'] = multiprocessing.cpu_count()
         self.json['images'] = -1
