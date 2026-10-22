@@ -1,1 +1,1 @@
-See https://github.com/WebODM/WebODM/blob/master/CONTRIBUTING.md
+See the AIDroneMap contributing guide: https://github.com/AIDroneMap/.github/blob/main/CONTRIBUTING.md
