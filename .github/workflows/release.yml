@@ -1,0 +1,311 @@
+# Builds, tests and publishes the AIDM engine images.
+#
+# A v* tag push publishes ghcr.io/aidronemap/aidm:<version>, :latest,
+# :<version>-gpu and :gpu, then opens a draft GitHub release.
+#
+# Run it by hand to test the build without publishing anything:
+#   gh workflow run release.yml -f publish=false
+# Publish again from an existing tag, for example after a failed run:
+#   gh workflow run release.yml --ref v0.1.0 -f publish=true
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Push the images. Needs a tag ref. When false, build and test only.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One publishing run per tag, never cancelled. A new dry run cancels an older one.
+concurrency:
+  group: ${{ github.workflow }}-${{ (github.event_name == 'push' || inputs.publish) && 'publish' || 'dry-run' }}-${{ github.ref }}
+  cancel-in-progress: ${{ !(github.event_name == 'push' || inputs.publish) }}
+
+env:
+  IMAGE: ghcr.io/aidronemap/aidm
+
+jobs:
+  check:
+    name: Check version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read VERSION and compare it with the tag
+        id: version
+        env:
+          PUBLISH_INPUT: ${{ inputs.publish }}
+        run: |
+          version=$(head -n 1 VERSION | tr -d '[:space:]')
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION must look like 1.2.3, found '$version'"
+            exit 1
+          fi
+
+          publish=false
+          if [ "$GITHUB_EVENT_NAME" = "push" ] || [ "$PUBLISH_INPUT" = "true" ]; then
+            publish=true
+          fi
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match VERSION $version"
+              exit 1
+            fi
+          elif [ "$publish" = "true" ]; then
+            echo "::error::Publishing needs a tag. Run: gh workflow run release.yml --ref v$version -f publish=true"
+            exit 1
+          fi
+
+          echo "Version $version, publish $publish"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cpu-amd64
+            runner: ubuntu-latest
+            dockerfile: Dockerfile
+            platform: linux/amd64
+          - name: cpu-arm64
+            runner: ubuntu-24.04-arm
+            dockerfile: Dockerfile
+            platform: linux/arm64
+          # The runner has no GPU, so the smoke test runs this image on the CPU
+          - name: gpu-amd64
+            runner: ubuntu-latest
+            dockerfile: gpu.Dockerfile
+            platform: linux/amd64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift
+          docker system prune -af
+          df -h /
+
+      - name: Add swap
+        run: |
+          swapfile=/swapfile
+          if mountpoint -q /mnt; then swapfile=/mnt/swapfile; fi
+          sudo swapoff -a
+          sudo rm -f "$swapfile"
+          sudo fallocate -l 10G "$swapfile"
+          sudo chmod 600 "$swapfile"
+          sudo mkswap "$swapfile"
+          sudo swapon "$swapfile"
+          free -h
+
+      # Build timestamps come from the commit, so the pushed image is the tested one
+      - name: Set build timestamp
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 1
+
+      - name: Build
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          load: true
+          tags: aidm-smoke:${{ matrix.name }}
+
+      - name: Smoke test
+        run: scripts/smoke-test.sh engine "aidm-smoke:$NAME"
+        env:
+          NAME: ${{ matrix.name }}
+
+      - name: Log in to ghcr.io
+        if: needs.check.outputs.publish == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Same inputs as the tested build, so every step comes from the build cache
+      - name: Push by digest
+        id: push
+        if: needs.check.outputs.publish == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Check that the pushed image is the tested one
+        if: needs.check.outputs.publish == 'true'
+        env:
+          TESTED: ${{ steps.build.outputs.imageid }}
+          PUSHED: ${{ steps.push.outputs.imageid }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          NAME: ${{ matrix.name }}
+        run: |
+          echo "Tested $TESTED, pushed $PUSHED as $IMAGE@$DIGEST"
+          if [ -z "$TESTED" ] || [ "$TESTED" != "$PUSHED" ]; then
+            echo "::error::The pushed image differs from the tested image"
+            exit 1
+          fi
+          mkdir -p digests
+          echo "$DIGEST" > "digests/$NAME"
+
+      - name: Upload digest
+        if: needs.check.outputs.publish == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digest-${{ matrix.name }}
+          path: digests/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Disk usage
+        if: always()
+        run: df -h /
+
+  manifest:
+    name: Tag images
+    needs: [check, build]
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      packages: write
+    outputs:
+      cpu-digest: ${{ steps.tag.outputs.cpu-digest }}
+      gpu-digest: ${{ steps.tag.outputs.gpu-digest }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifests and tags
+        id: tag
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          docker buildx imagetools create \
+            -t "$IMAGE:$VERSION" -t "$IMAGE:latest" \
+            "$IMAGE@$(cat digests/cpu-amd64)" "$IMAGE@$(cat digests/cpu-arm64)"
+          docker buildx imagetools create \
+            -t "$IMAGE:$VERSION-gpu" -t "$IMAGE:gpu" \
+            "$IMAGE@$(cat digests/gpu-amd64)"
+
+          cpu=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)
+          gpu=$(docker buildx imagetools inspect "$IMAGE:$VERSION-gpu" --format '{{json .Manifest}}' | jq -r .digest)
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
+          docker buildx imagetools inspect "$IMAGE:$VERSION-gpu"
+          echo "cpu-digest=$cpu" >> "$GITHUB_OUTPUT"
+          echo "gpu-digest=$gpu" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Draft release
+    needs: [check, manifest]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Creates or updates a draft. A published release is never touched.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+          CPU_DIGEST: ${{ needs.manifest.outputs.cpu-digest }}
+          GPU_DIGEST: ${{ needs.manifest.outputs.gpu-digest }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          awk -v heading="## $VERSION" '
+            $0 == heading { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > changelog.md
+          if ! grep -q '[^[:space:]]' changelog.md; then
+            echo "::error::CHANGELOG.md has no entry for $VERSION"
+            exit 1
+          fi
+
+          {
+            cat changelog.md
+            echo
+            echo "### Images"
+            echo
+            echo '```'
+            echo "docker pull $IMAGE:$VERSION"
+            echo "docker pull $IMAGE:$VERSION-gpu"
+            echo '```'
+            echo
+            echo "| Image | Digest |"
+            echo "| --- | --- |"
+            echo "| \`$IMAGE:$VERSION\` (amd64, arm64) | \`$CPU_DIGEST\` |"
+            echo "| \`$IMAGE:$VERSION-gpu\` (amd64) | \`$GPU_DIGEST\` |"
+          } > notes.md
+
+          if is_draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2> /dev/null); then
+            if [ "$is_draft" != "true" ]; then
+              echo "::error::Release $tag is already published. Not changing it."
+              exit 1
+            fi
+            gh release edit "$tag" --draft --notes-file notes.md
+          else
+            gh release create "$tag" --draft --verify-tag --title "AIDM $VERSION" --notes-file notes.md
+          fi
