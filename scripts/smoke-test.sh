@@ -13,7 +13,7 @@
 #
 # Examples:
 #   scripts/smoke-test.sh engine ghcr.io/aidronemap/aidm:0.1.0
-#   scripts/smoke-test.sh api ghcr.io/aidronemap/aidm-api:3.0.0
+#   scripts/smoke-test.sh api ghcr.io/aidronemap/aidm-api:2.5.0
 #
 # Environment:
 #   SMOKE_CACHE     where the dataset is downloaded once
