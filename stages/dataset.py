@@ -55,7 +55,7 @@ class ODMLoadDatasetStage(types.ODM_Stage):
             try:
                 os.remove(tree.benchmarking)
                 with open(tree.benchmarking, 'a') as b:
-                    b.write('ODX Benchmarking file created %s\nNumber of Cores: %s\n\n' % (system.now(), context.num_cores))
+                    b.write('AIDM Benchmarking file created %s\nNumber of Cores: %s\n\n' % (system.now(), context.num_cores))
             except Exception as e:
                 log.WARNING("Cannot write benchmark file: %s" % str(e))
 

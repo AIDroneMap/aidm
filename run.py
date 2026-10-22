@@ -3,7 +3,7 @@
 # Basic check
 import sys
 if sys.version_info.major < 3:
-    print("Ups! ODX needs to run with Python 3. It seems you launched it with Python 2. Try using: python3 run.py ... ")
+    print("AIDM needs Python 3, but it was launched with Python 2. Run it with: python3 run.py ...")
     sys.exit(1)
 
 import os
@@ -22,7 +22,7 @@ from stages.odm_app import ODMApp
 if __name__ == '__main__':
     args = config.config()
 
-    log.INFO('Initializing ODX %s - %s' % (log.get_version(), system.now()))
+    log.INFO('Initializing %s - %s' % (log.get_version_string(), system.now()))
 
     progressbc.set_project_name(args.name)
     args.project_path = os.path.join(args.project_path, args.name)
@@ -64,6 +64,6 @@ if __name__ == '__main__':
     
     # Do not show end message for local submodels runs
     if retcode == 0 and not "submodels" in args.project_path:
-        log.INFO('ODX app finished - %s' % system.now())
+        log.INFO('AIDM finished - %s' % system.now())
     else:
         exit(retcode)

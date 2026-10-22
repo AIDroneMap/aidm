@@ -4,7 +4,7 @@
 
 AIDM turns aerial and ground images into georeferenced orthophotos, digital elevation models, classified point clouds and textured 3D models. It is forked from [ODX](https://github.com/WebODM/ODX) and keeps ODX's command line, options and output files, so tools that work with ODX work with AIDM.
 
-> **Status: just forked, no AIDM release yet.** This repository currently matches ODX 3.8.4. Until the first AIDM release, use [ODX](https://github.com/WebODM/ODX) for production work. The [roadmap](#roadmap) shows what comes next.
+> **Status: 0.1.0, the first release.** AIDM 0.1.0 is ODX 3.8.4 packaged as AIDM. Processing and results are the same as ODX 3.8.4, and it makes no performance or accuracy claims yet. The [changelog](CHANGELOG.md) lists what changed and the [roadmap](#roadmap) shows what comes next.
 
 ## Why AIDM
 
@@ -33,29 +33,35 @@ AIDM merges the latest ODX into a test branch every week, runs the test datasets
 
 ## Quick start
 
-AIDM runs on Linux, or anywhere Docker runs a Linux container. Prebuilt images are not published yet, so build one from this repository:
+AIDM runs on Linux, or anywhere Docker runs a Linux container. Pull the image:
 
 ```
-git clone https://github.com/AIDroneMap/aidm.git
-cd aidm
-docker build -t aidm .
+docker pull ghcr.io/aidronemap/aidm:0.1.0
 ```
 
 Put your images in a folder named `images`, for example `/home/you/datasets/project/images`, and run:
 
 ```
-docker run -ti --rm -v /home/you/datasets:/datasets aidm --project-path /datasets project
+docker run -ti --rm -v /home/you/datasets:/datasets ghcr.io/aidronemap/aidm:0.1.0 --project-path /datasets project
 ```
 
-Options are passed after the project name, for example `--dsm --orthophoto-resolution 2`. Run `docker run --rm aidm --help` for the full list. They are the same as ODX's, documented at [docs.webodm.org](https://docs.webodm.org/options-flags/), until AIDM's own documentation is ready at [aidronemap.dev](https://aidronemap.dev).
+Options are passed after the project name, for example `--dsm --orthophoto-resolution 2`. Run `docker run --rm ghcr.io/aidronemap/aidm:0.1.0 --help` for the full list. They are the same as ODX's, documented at [docs.webodm.org](https://docs.webodm.org/options-flags/), until AIDM's own documentation is ready at [aidronemap.dev](https://aidronemap.dev).
 
 ### GPU
 
 With an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed:
 
 ```
+docker run -ti --rm --gpus all -v /home/you/datasets:/datasets ghcr.io/aidronemap/aidm:0.1.0-gpu --project-path /datasets project
+```
+
+### Build from source
+
+```
+git clone https://github.com/AIDroneMap/aidm.git
+cd aidm
+docker build -t aidm .
 docker build -f gpu.Dockerfile -t aidm:gpu .
-docker run -ti --rm --gpus all -v /home/you/datasets:/datasets aidm:gpu --project-path /datasets project
 ```
 
 ### Results

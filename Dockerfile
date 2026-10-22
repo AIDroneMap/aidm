@@ -12,7 +12,9 @@ WORKDIR /code
 COPY . ./
 
 # Run the build
-RUN bash configure.sh install
+# Build for a generic CPU, so the image also runs on machines older
+# than the one that built it
+RUN PORTABLE_INSTALL=YES bash configure.sh install
 
 # Clean Superbuild
 RUN bash configure.sh clean
@@ -22,6 +24,13 @@ RUN bash configure.sh clean
 ### Use a second image for the final asset to reduce the number and
 # size of the layers.
 FROM ubuntu:24.04
+
+# Image metadata. Keep the version equal to the VERSION file.
+LABEL org.opencontainers.image.source="https://github.com/AIDroneMap/aidm" \
+      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.licenses="AGPL-3.0" \
+      org.opencontainers.image.title="AIDM" \
+      org.opencontainers.image.description="Photogrammetry engine that turns drone images into orthophotos, elevation models, point clouds and textured 3D models. Based on ODX."
 
 # Env variables
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -39,7 +48,7 @@ COPY --from=builder /usr/local /usr/local
 
 # Install shared libraries that we depend on via APT, but *not*
 # the -dev packages to save space!
-# Also run a smoke test on ODX and OpenSfM
+# Also run a smoke test on AIDM and OpenSfM
 RUN bash configure.sh installruntimedeps \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \

@@ -23,6 +23,13 @@ RUN bash configure.sh clean
 # size of the layers.
 FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04
 
+# Image metadata. Keep the version equal to the VERSION file.
+LABEL org.opencontainers.image.source="https://github.com/AIDroneMap/aidm" \
+      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.licenses="AGPL-3.0" \
+      org.opencontainers.image.title="AIDM GPU" \
+      org.opencontainers.image.description="Photogrammetry engine that turns drone images into orthophotos, elevation models, point clouds and textured 3D models, with NVIDIA CUDA support. Based on ODX."
+
 # Env variables
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONPATH="$PYTHONPATH:/code/SuperBuild/install/lib/python3.12:/code/SuperBuild/install/bin/opensfm" \
@@ -41,7 +48,7 @@ RUN apt-get update -y \
  && apt-get install -y ffmpeg libtbbmalloc2
 # Install shared libraries that we depend on via APT, but *not*
 # the -dev packages to save space!
-# Also run a smoke test on ODX and OpenSfM
+# Also run a smoke test on AIDM and OpenSfM
 RUN bash configure.sh installruntimedeps \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
