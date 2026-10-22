@@ -1,247 +1,107 @@
-# ODX
+# AIDM
 
-![CPU Build](https://img.shields.io/github/actions/workflow/status/WebODM/ODX/publish-docker.yml?branch=master&label=docker%20CPU) ![GPU Build](https://img.shields.io/github/actions/workflow/status/WebODM/ODX/publish-docker-gpu.yml?branch=master&label=docker%20GPU) ![Windows Build](https://img.shields.io/github/actions/workflow/status/WebODM/ODX/publish-windows.yml?branch=master&label=windows) ![Version](https://img.shields.io/github/v/release/WebODM/ODX) ![License](https://img.shields.io/github/license/WebODM/ODX) ![Contributors](https://img.shields.io/github/contributors/WebODM/ODX) ![Updated](https://img.shields.io/github/last-commit/WebODM/ODX)
+**The distributed photogrammetry engine of [AIDroneMap](https://github.com/AIDroneMap). Every machine, one command.**
 
-> **📢 Now with OpenSfM 1.0 support, GPU based feature matching, NVIDIA GeForce RTX 50 Series support, checkpoints support and tons of improvements!** [Read the announcement](https://webodm.org/blog/announcement/)
+AIDM turns aerial and ground images into georeferenced orthophotos, digital elevation models, classified point clouds and textured 3D models. It is forked from [ODX](https://github.com/WebODM/ODX) and keeps ODX's command line, options and output files, so tools that work with ODX work with AIDM.
 
-> **If you like ODX, take a second and ⭐ the project 🙏**
+> **Status: just forked, no AIDM release yet.** This repository currently matches ODX 3.8.4. Until the first AIDM release, use [ODX](https://github.com/WebODM/ODX) for production work. The [roadmap](#roadmap) shows what comes next.
 
-A free and open source photogrammetry engine for processing aerial and ground imagery. ODX turns images into:
+## Why AIDM
 
-* Classified Point Clouds
-* 3D Textured Models
-* Georeferenced Orthophotos
-* Georeferenced Digital Elevation Models
+Drones capture more images, at higher resolution, than ever before, and processing them takes serious computing power. AIDM is built around two goals:
 
-![ODX Pipeline](https://user-images.githubusercontent.com/1174901/96613039-7de94500-12cc-11eb-9975-ca67b188b0d3.png)
+- **Distributed processing.** One job spread across the CPUs and GPUs you can reach: your own machines, a cluster, or cloud capacity billed by the second that stops when the job ends.
+- **Simplicity.** One engine image, one command to run it, one URL to point a client at.
 
-The application is available for Windows, Mac and Linux and it works from the command line, making it ideal for power users, scripts and for integration with other software.
+AIDM is the engine only. Scheduling across machines and the connectors to cloud providers live in a separate repository, and so does the open web interface. Each piece works on its own.
 
-If you would rather not type commands in a shell and are looking for a friendly user interface, check out [WebODM](https://webodm.org).
+## What changes compared to ODX
 
+Planned work, in rough order. Each item will only be claimed as done when a public benchmark shows it.
 
-## Quickstart
+- **Per-stage profiling and benchmarks** against ODX on public datasets, published with every release, covering time, memory, cost and accuracy.
+- **Resources known before a job starts:** the engine estimates memory and CPU per stage, so a scheduler can size each machine correctly.
+- **Split-merge as the default path for large jobs:** submodels on separate machines, a parallel merge, and a report per submodel.
+- **Work that moves between machines:** stage inputs and outputs in S3-compatible storage, so a stage can resume on another machine.
+- **More of the pipeline on the GPU,** starting with the slowest stages the profiler finds.
+- **Machine-readable progress and results:** structured progress events and a result manifest with a clear status for every output.
+- **A camera test suite** with real sample files, to catch metadata bugs before users do.
 
-### Windows
+## Weekly releases
 
-First download the latest [Windows setup](https://github.com/WebODM/ODX/releases). After installation, open the `ODX Console`, place some images in a folder named `images` (for example `C:\Users\youruser\datasets\project\images`) and run:
+AIDM merges the latest ODX into a test branch every week, runs the test datasets, and publishes a release labelled with the ODX commit it includes. You get ODX's fixes and ours together.
 
-```bash
-run c:\Users\youruser\datasets\project
-```
+## Quick start
 
-Alternatively, you can also use [docker](https://docs.docker.com):
-
-```bash
-# Windows
-docker run -ti --rm -v c:/Users/youruser/datasets:/datasets webodm/odx --project-path /datasets project
-```
-
-### macOS/Linux
-
-First install [docker](https://docs.docker.com). Once you have docker installed, place some images in a folder named `images` (for example `C:\Users\youruser\datasets\project\images` or `/home/youruser/datasets/project/images`) and run from a terminal:
-
-```bash
-# Mac/Linux
-docker run -ti --rm -v /home/youruser/datasets:/datasets webodm/odx --project-path /datasets project
-```
-
-## Arguments
-
-You can pass [additional parameters](https://docs.webodm.org/options-flags/) by appending them to the command:
-
-```bash
-run c:\Users\youruser\datasets\project [--args]
-```
-
-```bash
-docker run -ti --rm -v /datasets:/datasets webodm/odx --project-path /datasets project [--args]
-```
-
-For example, to generate a DSM (`--dsm`) and increase the orthophoto resolution (`--orthophoto-resolution 2`) :
-
-```bash
-docker run -ti --rm -v /datasets:/datasets webodm/odx --project-path /datasets project --dsm --orthophoto-resolution 2
-```
-
-To see all parameters:
-
-```bash
-docker run -ti --rm -v /datasets:/datasets webodm/odx --help
-```
-
-## Viewing Results
-
-When the process finishes, the results will be organized as follows:
-
-    |-- images/
-        |-- DJI_0001.jpg
-        |-- ...
-    |-- opensfm/
-        |-- see mapillary/opensfm repository for more info
-    |-- odm_meshing/
-        |-- odm_mesh.ply                    # A 3D mesh
-    |-- odm_texturing/
-        |-- odm_textured_model_geo.obj      # Georeferenced textured mesh
-    |-- odm_georeferencing/
-        |-- odm_georeferenced_model.laz     # LAZ format point cloud
-    |-- odm_orthophoto/
-        |-- odm_orthophoto.tif              # Orthophoto GeoTiff
-
-You can use the following free and open source software to open the files generated in ODX:
- * .tif (GeoTIFF): [QGIS](http://www.qgis.org/)
- * .laz (Compressed LAS): [CloudCompare](https://www.cloudcompare.org/)
- * .obj (Wavefront OBJ), .ply (Stanford Triangle Format): [MeshLab](http://www.meshlab.net/)
-
-**Note!** Opening the .tif files generated by ODX in programs such as Photoshop or GIMP might not work (they are GeoTIFFs, not plain TIFFs). Use [QGIS](http://www.qgis.org/) instead.
-
-## API
-
-ODX can be made accessible from a network via [NodeODX](https://github.com/WebODM/NodeODX).
-
-## Documentation
-
-See http://docs.webodm.org for tutorials and more guides.
-
-## Community
-
-See https://webodm.org/community to find a community near you.
-
-## GPU Acceleration
-
-ODX has GPU support to speed up certain computations. On Windows, this is enabled by default. With docker, to enable it, you need to use the `webodm/odx:gpu` docker image and you need to pass the `--gpus all` flag:
+AIDM runs on Linux, or anywhere Docker runs a Linux container. Prebuilt images are not published yet, so build one from this repository:
 
 ```
-docker run -ti --rm -v c:/Users/youruser/datasets:/datasets --gpus all webodm/odx:gpu --project-path /datasets project
+git clone https://github.com/AIDroneMap/aidm.git
+cd aidm
+docker build -t aidm .
 ```
 
-When you run ODX, if the GPU is recognized, in the first few lines of output you should see:
+Put your images in a folder named `images`, for example `/home/you/datasets/project/images`, and run:
 
 ```
-[INFO]    nvidia-smi detected
+docker run -ti --rm -v /home/you/datasets:/datasets aidm --project-path /datasets project
 ```
 
-If you have an NVIDIA card, you can test that docker is recognizing the GPU by running:
+Options are passed after the project name, for example `--dsm --orthophoto-resolution 2`. Run `docker run --rm aidm --help` for the full list. They are the same as ODX's, documented at [docs.webodm.org](https://docs.webodm.org/options-flags/), until AIDM's own documentation is ready at [aidronemap.dev](https://aidronemap.dev).
+
+### GPU
+
+With an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed:
 
 ```
-docker run --rm --gpus all nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-smi
+docker build -f gpu.Dockerfile -t aidm:gpu .
+docker run -ti --rm --gpus all -v /home/you/datasets:/datasets aidm:gpu --project-path /datasets project
 ```
 
-If you see an output that looks like this:
+### Results
+
+When processing finishes, the project folder contains:
 
 ```
-Fri Jul 24 18:51:55 2020       
-+-----------------------------------------------------------------------------+
-| NVIDIA-SMI 440.82       Driver Version: 440.82       CUDA Version: 10.2     |
-|-------------------------------+----------------------+----------------------+
-| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
-| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+odm_orthophoto/odm_orthophoto.tif          georeferenced orthophoto (GeoTIFF)
+odm_dem/                                   elevation models, when --dsm or --dtm is set
+odm_georeferencing/odm_georeferenced_model.laz   point cloud
+odm_texturing/odm_textured_model_geo.obj   textured 3D model
 ```
 
-You're in good shape!
+Open GeoTIFFs in [QGIS](https://qgis.org), point clouds in [CloudCompare](https://www.cloudcompare.org) and meshes in [MeshLab](https://www.meshlab.net).
 
-See https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html for information on docker/NVIDIA setup.
+## Platforms
 
-You can disable GPU acceleration by using `--no-gpu`.
+AIDM targets Linux on x86-64, for CPU and NVIDIA CUDA. Windows and macOS native builds from ODX are not maintained here; on those systems AIDM runs in a Linux container.
 
-### Build Docker Images
+## Roadmap
 
-If you want to rebuild your own docker image, from the `ODX` folder you can type:
+Target dates, subject to change.
 
-```bash
-docker build -t myodx --no-cache .
-```
+| Phase | Target | Focus |
+| --- | --- | --- |
+| Foundation | Nov 2026 | Linux images, test datasets, weekly sync with ODX |
+| Measure | Dec 2026 to Jan 2027 | Per-stage profiling, baseline numbers against ODX |
+| Speed | Feb to Mar 2027 | First speedups on the slowest stages, mixed CPU and GPU jobs |
+| 1.0 | Apr to Jun 2027 | AI masking and dataset checks, documentation, first stable release |
 
-## Video Support
+## Contributing
 
-ODX can automatically extract images from video files (.mp4, .mov, .lrv, .ts). Just place one or more video files into the `images` folder and run the program as usual. Subtitles files (.srt) with GPS information are also supported. Place .srt files in the `images` folder, making sure that the filenames match. For example, `my_video.mp4` ==> `my_video.srt` (case-sensitive).
+Contributions are welcome. Read the [contributing guide](https://github.com/AIDroneMap/.github/blob/main/CONTRIBUTING.md) first. Every commit needs a DCO sign-off (`git commit -s`).
 
-## Developers
+If a fix also applies to ODX, it is welcome there too. Note that ODX only accepts pull requests and issues opened and written by a person, with any AI use disclosed; see their contributing guidelines.
 
-Help improve our software! We welcome contributions from everyone, whether to add new features, improve speed, fix existing bugs or add support for more cameras. Check [contributing guidelines](https://github.com/WebODM/WebODM/blob/master/CONTRIBUTING.md).
+## Licence
 
+AIDM is licensed under the [GNU Affero General Public License v3.0](LICENSE), the same licence as ODX. If you run a modified version of AIDM as a network service, you must offer its source code to the users of that service.
 
-### Setup Development Environment
-
-Docker is recommended for setting up a development environment. It's fairly easy to setup one with Linux and macOS. On Windows, I could recommend to use WSL.
-
-Clone the repository and then run from a shell:
-
-```bash
-$ DATA=/path/to/datasets ./start-dev-env.sh
-```
-
-Where `/path/to/datasets` is a directory where you can place test datasets (it can also point to an empty directory if you don't have test datasets).
-
-Run configure to set up the required third party libraries:
-
-```bash
-(odxdev) [user:/code] master+* ± bash configure.sh reinstall
-```
-
-If you get kicked out by the setup, or you accidentally press CTRL+C, you can re-enter by doing:
-
-```bash
-docker start odxdev
-docker exec -ti odxdev bash
-su your_username
-```
-
-(change `your_username` to your username, and if that doesn't work, use "ubuntu")
-
-You can now make changes to the ODX source. When you are ready to test the changes you can simply invoke:
-
-```bash
-(odxdev) [user:/code] master+* ± ./run.sh --project-path /datasets mydataset
-```
-### Stop dev container
-
-```bash
- docker  stop odxdev
-```
-
-### Resume dev container
-
-(change `your_username` to your username)
-
-```bash
-docker start odxdev
-docker exec -ti odxdev bash
-su your_username
-```
-
-If you have questions, join the #devtalk's channel on discord: https://webodm.org/community
-
-1. Try to keep commits clean and simple
-2. Submit a pull request with detailed changes and test results
-3. Have fun!
-
-### Troubleshooting
-
-The dev environment makes use of `webodm/nodeodx` by default. You may want to run 
-`docker pull webodm/nodeodx` before running `./start-dev-env.sh` to avoid using an old cached version.
-
-In order to make a clean build, remove `~/.odm-dev-home` and `ODX/.setupdevenv`.
-
-## Code signing policy
-
-Free code signing on Windows provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org/).
-
-* Approvers, committers and reviewers: https://github.com/orgs/WebODM/people
-
-This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
+Copyright notices from ODX, OpenDroneMap and their contributors are kept as they are.
 
 ## Credits
 
-ODX makes use of other awesome open source projects to perform its tasks. Among them we'd like to highlight:
+AIDM exists thanks to the work of the [ODX](https://github.com/WebODM/ODX) and [WebODM](https://github.com/WebODM) maintainers and contributors, and of [OpenDroneMap](https://github.com/OpenDroneMap), where the engine began. It also builds on [OpenSfM](https://github.com/mapillary/OpenSfM), [OpenMVS](https://github.com/cdcseacave/openMVS), [PDAL](https://github.com/PDAL/PDAL), [Entwine](https://entwine.io), [MVS Texturing](https://github.com/nmoehrle/mvs-texturing), [GDAL](https://gdal.org) and [PoissonRecon](https://github.com/mkazhdan/PoissonRecon).
 
- - [OpenSfM](https://github.com/OpenSfM/OpenSfM)
- - [OpenMVS](https://github.com/cdcseacave/openMVS/)
- - [PDAL](https://github.com/PDAL/PDAL)
- - [Entwine](https://entwine.io/)
- - [MVS Texturing](https://github.com/nmoehrle/mvs-texturing)
- - [GDAL](https://gdal.org/)
- - [PoissonRecon](https://github.com/mkazhdan/PoissonRecon)
+AIDM is an independent project. It is not affiliated with or endorsed by WebODM or OpenDroneMap.
 
-
-
+AIDroneMap is maintained by [Dimitri Albino](https://github.com/DimitriAlbino) and sponsored by [ITALDRONI](https://italdroni.it).
