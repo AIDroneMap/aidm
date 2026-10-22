@@ -27,5 +27,5 @@ The first AIDM release. It is the ODX 3.8.4 engine, packaged and named as AIDM. 
 ### Known limitations
 
 - No performance or accuracy changes compared to ODX 3.8.4 yet.
-- Images are for Linux on x86-64. arm64 images will follow.
+- Images are for Linux only. The CPU image runs on x86-64 and arm64, the GPU image on x86-64 only.
 - `configure.py`, the Windows configure script from ODX, is still in the repository. It no longer works, because the vcpkg files it reads are gone.

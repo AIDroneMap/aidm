@@ -79,7 +79,7 @@ Open GeoTIFFs in [QGIS](https://qgis.org), point clouds in [CloudCompare](https:
 
 ## Platforms
 
-AIDM targets Linux on x86-64, for CPU and NVIDIA CUDA. Windows and macOS native builds from ODX are not maintained here; on those systems AIDM runs in a Linux container.
+AIDM targets Linux. The CPU image runs on x86-64 and arm64, and the NVIDIA CUDA image on x86-64. Windows and macOS native builds from ODX are not maintained here. On those systems AIDM runs in a Linux container.
 
 ## Roadmap
 
