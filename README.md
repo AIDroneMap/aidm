@@ -55,6 +55,8 @@ With an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/da
 docker run -ti --rm --gpus all -v /home/you/datasets:/datasets ghcr.io/aidronemap/aidm:0.1.0-gpu --project-path /datasets project
 ```
 
+Without `--gpus`, or on a machine without an NVIDIA GPU, the GPU image processes on the CPU.
+
 ### Build from source
 
 ```

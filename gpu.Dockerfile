@@ -46,14 +46,28 @@ COPY --from=builder /usr/local /usr/local
 
 RUN apt-get update -y \
  && apt-get install -y ffmpeg libtbbmalloc2
+
+# OpenMVS is linked against libcuda.so.1, the NVIDIA driver library. The
+# NVIDIA Container Toolkit mounts it into the container when docker runs with
+# --gpus. Without it the OpenMVS binaries cannot start, even in CPU mode.
+# Install the CUDA stub library as a fallback, in a directory that ldconfig
+# lists after the system directories: the real driver wins when it is
+# mounted, and the image still processes on the CPU when it is not.
+RUN mkdir -p /usr/local/lib/aidm-cuda-stub \
+  && cp /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/lib/aidm-cuda-stub/libcuda.so.1 \
+  && echo /usr/local/lib/aidm-cuda-stub > /etc/ld.so.conf.d/zz-aidm-cuda-stub.conf \
+  && ldconfig
+
 # Install shared libraries that we depend on via APT, but *not*
 # the -dev packages to save space!
-# Also run a smoke test on AIDM and OpenSfM
+# Also run a smoke test on AIDM and OpenSfM, and check that OpenMVS
+# can find all its shared libraries without a GPU
 RUN bash configure.sh installruntimedeps \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
   && bash run.sh --help \
-  && bash -c "eval $(python3 /code/modules/context.py) && python3 -c 'from opensfm import io, pymap'"
+  && bash -c "eval $(python3 /code/modules/context.py) && python3 -c 'from opensfm import io, pymap'" \
+  && ! ldd /code/SuperBuild/install/bin/OpenMVS/DensifyPointCloud | grep "not found"
 
 # Entry point
 ENTRYPOINT ["python3", "/code/run.py"]
