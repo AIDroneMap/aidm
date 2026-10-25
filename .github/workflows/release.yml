@@ -7,6 +7,21 @@
 #   gh workflow run release.yml -f publish=false
 # Publish again from an existing tag, for example after a failed run:
 #   gh workflow run release.yml --ref v0.1.0 -f publish=true
+#
+# Every run, dry run or tag, also tests the GPU image on a real NVIDIA GPU
+# (the gpu-test job). The GitHub runners have no GPU, so the build job only
+# proves that the GPU image falls back to the CPU. The build job pushes the
+# GPU image by digest (to ghcr.io/aidronemap/aidm-ci on dry runs, untagged),
+# and gpu-test runs scripts/gpu-smoke-modal.py, which starts that exact
+# digest on a T4 on Modal and checks that the engine used the GPU. Nothing is
+# tagged unless gpu-test passes.
+#
+# gpu-test runs in the modal-gpu deployment environment, which needs:
+#   secrets   MODAL_TOKEN_ID, MODAL_TOKEN_SECRET
+#   variable  MODAL_ENVIRONMENT, the Modal environment to run in
+# It pulls the image with this run's GITHUB_TOKEN; no registry token is
+# stored anywhere. Each run costs about USD 0.50 on Modal (a T4, 4 cores and
+# 16 GiB for about 30 minutes at list prices); the job log prints an estimate.
 
 name: Release
 
@@ -31,6 +46,8 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/aidronemap/aidm
+  # Untagged GPU images from dry runs, so that gpu-test can pull them
+  CI_IMAGE: ghcr.io/aidronemap/aidm-ci
 
 jobs:
   check:
@@ -84,6 +101,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      gpu-image: ${{ steps.check-push.outputs.gpu-image }}
     strategy:
       fail-fast: false
       matrix:
@@ -154,41 +173,48 @@ jobs:
         env:
           NAME: ${{ matrix.name }}
 
+      # The GPU image is pushed on every run, for gpu-test
       - name: Log in to ghcr.io
-        if: needs.check.outputs.publish == 'true'
+        if: needs.check.outputs.publish == 'true' || matrix.name == 'gpu-amd64'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Same inputs as the tested build, so every step comes from the build cache
+      # Same inputs as the tested build, so every step comes from the build cache.
+      # Dry runs push to CI_IMAGE, by digest only, so nothing is published.
       - name: Push by digest
         id: push
-        if: needs.check.outputs.publish == 'true'
+        if: needs.check.outputs.publish == 'true' || matrix.name == 'gpu-amd64'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           provenance: false
-          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ needs.check.outputs.publish == 'true' && env.IMAGE || env.CI_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Check that the pushed image is the tested one
-        if: needs.check.outputs.publish == 'true'
+        id: check-push
+        if: needs.check.outputs.publish == 'true' || matrix.name == 'gpu-amd64'
         env:
           TESTED: ${{ steps.build.outputs.imageid }}
           PUSHED: ${{ steps.push.outputs.imageid }}
           DIGEST: ${{ steps.push.outputs.digest }}
           NAME: ${{ matrix.name }}
+          PUSHED_TO: ${{ needs.check.outputs.publish == 'true' && env.IMAGE || env.CI_IMAGE }}
         run: |
-          echo "Tested $TESTED, pushed $PUSHED as $IMAGE@$DIGEST"
+          echo "Tested $TESTED, pushed $PUSHED as $PUSHED_TO@$DIGEST"
           if [ -z "$TESTED" ] || [ "$TESTED" != "$PUSHED" ]; then
             echo "::error::The pushed image differs from the tested image"
             exit 1
           fi
           mkdir -p digests
           echo "$DIGEST" > "digests/$NAME"
+          if [ "$NAME" = "gpu-amd64" ]; then
+            echo "gpu-image=$PUSHED_TO@$DIGEST" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload digest
         if: needs.check.outputs.publish == 'true'
@@ -203,9 +229,46 @@ jobs:
         if: always()
         run: df -h /
 
+  # Runs the GPU image on a real GPU on Modal. See the comment at the top.
+  gpu-test:
+    name: GPU test on Modal
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: modal-gpu
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the Modal client
+        run: |
+          python3 -m venv "$RUNNER_TEMP/modal"
+          "$RUNNER_TEMP/modal/bin/pip" install --quiet modal==1.6.2
+
+      # The Sandbox lives at most 40 minutes (SMOKE_TIMEOUT) and is not retried.
+      # Builder 2025.06 adds nothing to a registry image, so the engine keeps
+      # its own Python.
+      - name: Run the engine on a GPU
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: ${{ vars.MODAL_ENVIRONMENT }}
+          MODAL_IMAGE_BUILDER_VERSION: "2025.06"
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          SMOKE_GPU: T4
+          SMOKE_TIMEOUT: "2400"
+          GPU_IMAGE: ${{ needs.build.outputs.gpu-image }}
+        run: '"$RUNNER_TEMP/modal/bin/python" scripts/gpu-smoke-modal.py "$GPU_IMAGE"'
+
   manifest:
     name: Tag images
-    needs: [check, build]
+    needs: [check, build, gpu-test]
     if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
