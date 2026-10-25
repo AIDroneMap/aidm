@@ -25,26 +25,22 @@
 #
 # Dataset: Brighton Beach, 18 images taken with a DJI drone.
 #   Source:  https://github.com/OpenDroneMap/drone_dataset_brighton_beach
-#   Commit:  9506a9bf09c9678b7d0b80b014af5b606c8a7255
+#   Commit:  pinned in scripts/smoke-test.conf
 #   Licence: BSD 2-Clause, Copyright (c) 2017, Piero Toffanin
 # The images are downloaded at run time and never committed to this repository.
 
 set -euo pipefail
 
-DATASET_REPO="https://github.com/OpenDroneMap/drone_dataset_brighton_beach"
-DATASET_COMMIT="9506a9bf09c9678b7d0b80b014af5b606c8a7255"
-DATASET_IMAGES=18
+# Dataset pin, default options and expected outputs, shared with
+# scripts/gpu-smoke-modal.py
+# shellcheck source=smoke-test.conf
+source "$(dirname "${BASH_SOURCE[0]}")/smoke-test.conf"
 
 # Outputs that must exist and be non-empty, relative to the project folder
-OUTPUTS=(
-    "odm_orthophoto/odm_orthophoto.tif"
-    "odm_dem/dsm.tif"
-    "odm_georeferencing/odm_georeferenced_model.laz"
-    "odm_texturing/odm_textured_model_geo.obj"
-)
+read -r -a OUTPUT_FILES <<< "$OUTPUTS"
 
 CACHE="${SMOKE_CACHE:-$HOME/.cache/aidm-smoke-test}"
-OPTIONS="${SMOKE_OPTIONS:---dsm}"
+OPTIONS="${SMOKE_OPTIONS:-$DEFAULT_OPTIONS}"
 TIMEOUT="${SMOKE_TIMEOUT:-3600}"
 
 usage() {
@@ -110,7 +106,7 @@ trap cleanup EXIT
 
 check_outputs() {
     local project="$1" missing=0 size
-    for out in "${OUTPUTS[@]}"; do
+    for out in "${OUTPUT_FILES[@]}"; do
         if [ -s "$project/$out" ]; then
             size=$(stat -c %s "$project/$out")
             log "ok    $out ($size bytes)"

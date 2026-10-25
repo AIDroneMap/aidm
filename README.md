@@ -31,6 +31,8 @@ Planned work, in rough order. Each item will only be claimed as done when a publ
 
 AIDM merges the latest ODX into a test branch every week, runs the test datasets, and publishes a release labelled with the ODX commit it includes. You get ODX's fixes and ours together.
 
+Before an image is published, the [release workflow](.github/workflows/release.yml) processes a small public dataset with each image and checks the outputs ([`scripts/smoke-test.sh`](scripts/smoke-test.sh)). The GPU image is tested twice: on a machine without a GPU, where it must fall back to the CPU, and on a real NVIDIA T4 on [Modal](https://modal.com), where the engine must use the GPU ([`scripts/gpu-smoke-modal.py`](scripts/gpu-smoke-modal.py)). The images are only tagged when both pass. The GPU test costs about USD 0.50 per run and needs the `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` secrets and the `MODAL_ENVIRONMENT` variable in the `modal-gpu` environment of the repository.
+
 ## Quick start
 
 AIDM runs on Linux, or anywhere Docker runs a Linux container. Pull the image:

@@ -16,6 +16,7 @@ The first AIDM release. It is the ODX 3.8.4 engine, packaged and named as AIDM. 
 - The CPU image is built for a generic CPU, as the GPU image already was. It runs on machines older than the one that built it.
 - Both images carry OCI labels for source, version, licence, title and description.
 - The GPU image also runs on machines without a GPU, on the CPU. It ships the CUDA stub driver library as a fallback for OpenMVS; the real driver replaces it when the container runs with `--gpus`.
+- Every release run tests the GPU image on a real NVIDIA GPU on Modal and checks that the engine uses it. The images are only tagged when this test passes.
 
 ### Removed
 
