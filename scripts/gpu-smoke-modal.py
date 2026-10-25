@@ -34,6 +34,7 @@
 # Needs the modal Python package; the release workflow pins its version.
 
 import os
+import re
 import shlex
 import sys
 import tarfile
@@ -103,6 +104,25 @@ def check_engine_log(text):
         problems.append("OpenMVS failed on the GPU and fell back to the CPU")
 
     return problems
+
+
+def check_nvidia_smi(code, output):
+    """Return a list of problems with the nvidia-smi GPU query.
+
+    Only the query decides pass or fail. The CUDA version line in the
+    nvidia-smi header is printed for information and never checked.
+    """
+    if code != 0:
+        return ["nvidia-smi failed in the Sandbox (exit code %s)" % code]
+    if not output.strip():
+        return ["nvidia-smi listed no GPU in the Sandbox"]
+    return []
+
+
+def cuda_version(header):
+    """Return the CUDA version shown by nvidia-smi, or None if not found."""
+    match = re.search(r"CUDA(?: Driver)? Version:\s*([0-9][0-9.]*)", header)
+    return match.group(1) if match else None
 
 
 def fetch_dataset(config, cache):
@@ -220,10 +240,11 @@ def main():
             log("Sandbox %s started" % sb.object_id)
 
             log("GPU and driver:")
-            code, smi = run(sb, "nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader"
-                                " && nvidia-smi | grep -o 'CUDA Version: [0-9.]*'")
-            if code != 0:
-                problems.append("nvidia-smi failed in the Sandbox")
+            code, smi = run(sb, "nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader")
+            problems += check_nvidia_smi(code, smi)
+            # Information only: the header format changes between drivers
+            _, header = run(sb, "nvidia-smi", echo=False)
+            log("CUDA version: %s" % (cuda_version(header) or "not shown by nvidia-smi"))
 
             # Shows which libcuda.so.1 OpenMVS loads: the driver, or the stub
             # from gpu.Dockerfile, which must lose when a driver is present

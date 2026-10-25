@@ -41,6 +41,39 @@ class TestReadConfig(unittest.TestCase):
                 gpu_smoke.read_config(path)
 
 
+QUERY_OUTPUT = "Tesla T4, 610.57.04, 15360 MiB\n"
+
+
+class TestCheckNvidiaSmi(unittest.TestCase):
+    def test_query_ok(self):
+        self.assertEqual(gpu_smoke.check_nvidia_smi(0, QUERY_OUTPUT), [])
+
+    def test_header_without_cuda_version_does_not_fail(self):
+        # Driver 610.57.04 on Modal: the query works, but the header has no
+        # "CUDA Version:" text. That must not fail the test.
+        header = "| NVIDIA-SMI 610.57.04    Driver Version: 610.57.04 |\n"
+        self.assertIsNone(gpu_smoke.cuda_version(header))
+        self.assertEqual(gpu_smoke.check_nvidia_smi(0, QUERY_OUTPUT), [])
+
+    def test_query_fails(self):
+        self.assertTrue(gpu_smoke.check_nvidia_smi(127, "bash: nvidia-smi: command not found\n"))
+
+    def test_query_lists_no_gpu(self):
+        self.assertTrue(gpu_smoke.check_nvidia_smi(0, ""))
+
+
+class TestCudaVersion(unittest.TestCase):
+    def test_classic_header(self):
+        header = "| NVIDIA-SMI 575.57.08    Driver Version: 575.57.08    CUDA Version: 12.9     |"
+        self.assertEqual(gpu_smoke.cuda_version(header), "12.9")
+
+    def test_driver_version_label(self):
+        self.assertEqual(gpu_smoke.cuda_version("CUDA Driver Version: 13.3"), "13.3")
+
+    def test_empty(self):
+        self.assertIsNone(gpu_smoke.cuda_version(""))
+
+
 class TestCheckEngineLog(unittest.TestCase):
     def test_passing_log(self):
         self.assertEqual(gpu_smoke.check_engine_log(GOOD_LOG), [])
