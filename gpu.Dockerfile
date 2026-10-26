@@ -34,8 +34,8 @@ LABEL org.opencontainers.image.source="https://github.com/AIDroneMap/aidm" \
 
 # Env variables
 ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONPATH="$PYTHONPATH:/code/SuperBuild/install/lib/python3.12:/code/SuperBuild/install/bin/opensfm" \
-    LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/code/SuperBuild/install/lib" \
+    PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}/code/SuperBuild/install/lib/python3.12:/code/SuperBuild/install/bin/opensfm" \
+    LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}/code/SuperBuild/install/lib" \
     PDAL_DRIVER_PATH="/code/SuperBuild/install/bin"
 
 WORKDIR /code
