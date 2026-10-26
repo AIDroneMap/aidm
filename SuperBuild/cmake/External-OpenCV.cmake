@@ -72,7 +72,6 @@ ExternalProject_Add(${_proj_name}
     -DBUILD_PERF_TESTS=OFF
     -DBUILD_DOCS=OFF
     -DBUILD_opencv_apps=OFF
-    -DBUILD_opencv_gpu=OFF
     -DBUILD_opencv_videostab=OFF
     -DBUILD_opencv_nonfree=OFF
     -DBUILD_opencv_stitching=OFF
