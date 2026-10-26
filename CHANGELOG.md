@@ -10,6 +10,7 @@ AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX 
 - The minimum CPU is now Intel Haswell (2013) or AMD Zen (2017) on x86-64, and ARMv8.2-A on arm64 (AWS Graviton 2, Ampere Altra, Apple M1, Raspberry Pi 5). Older CPUs, including the Raspberry Pi 4, are not supported.
 - The new target does not make the engine faster. On an AMD Ryzen 9 9900X, against 0.1.0 built from the same commit, a full run takes the same time: 124.6 s against 125.1 s on Brighton Beach (18 images) and 302.3 s against 305.3 s on aidm-vineyard-small (73 images). Most stages change by less than 4%. The openmvs stage is 0.2% slower on aidm-vineyard-small and 6% to 8% slower on Brighton Beach (about 2 s of 29 s).
 - `configure.sh install` replaces gcc and g++ with the wrappers in `docker/` when `CPU_TARGET_INSTALL=YES` is set. The old name, `PORTABLE_INSTALL`, no longer does anything.
+- `--sky-removal` needs less memory, and its sky masks may differ from 0.1.0 by a few pixels on the mask edge. The sky filter runs in float32 and frees the full image as soon as it can, so a 20 megapixel image needs 0.75 GiB instead of 1.8 GiB. It also runs only as many images at once as fit in half the free memory. On Brighton Beach with 24 threads, the dataset stage peaks at 4.2 GiB instead of 10.4 GiB. Its masks there are byte-identical, but in a synthetic worst case 5 pixels out of 54 million flip, all on the mask edge.
 
 ### Added
 
