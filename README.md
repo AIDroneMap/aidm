@@ -6,6 +6,8 @@ AIDM turns aerial and ground images into georeferenced orthophotos, digital elev
 
 > **Status: 0.1.0, the first release.** AIDM 0.1.0 is ODX 3.8.4 packaged as AIDM. Processing and results are the same as ODX 3.8.4, and it makes no performance or accuracy claims yet. The [changelog](CHANGELOG.md) lists what changed and the [roadmap](#roadmap) shows what comes next.
 
+Documentation is at [aidronemap.dev](https://aidronemap.dev): [install and run](https://aidronemap.dev/start/install-and-run/), [hardware](https://aidronemap.dev/start/hardware/), [options](https://aidronemap.dev/engine/options/) and [outputs](https://aidronemap.dev/engine/outputs/). News and the open datasets are on [aidronemap.org](https://aidronemap.org).
+
 ## Why AIDM
 
 Drones capture more images, at higher resolution, than ever before, and processing them takes serious computing power. AIDM is built around two goals:
@@ -47,7 +49,7 @@ Put your images in a folder named `images`, for example `/home/you/datasets/proj
 docker run -ti --rm -v /home/you/datasets:/datasets ghcr.io/aidronemap/aidm:0.1.0 --project-path /datasets project
 ```
 
-Options are passed after the project name, for example `--dsm --orthophoto-resolution 2`. Run `docker run --rm ghcr.io/aidronemap/aidm:0.1.0 --help` for the full list. They are the same as ODX's, documented at [docs.webodm.org](https://docs.webodm.org/options-flags/), until AIDM's own documentation is ready at [aidronemap.dev](https://aidronemap.dev).
+Options are passed after the project name, for example `--dsm --orthophoto-resolution 2`. Run `docker run --rm ghcr.io/aidronemap/aidm:0.1.0 --help` for the full list. They are the same as ODX's, and every one is described in [Engine options](https://aidronemap.dev/engine/options/).
 
 ### GPU
 
@@ -79,7 +81,7 @@ odm_georeferencing/odm_georeferenced_model.laz   point cloud
 odm_texturing/odm_textured_model_geo.obj   textured 3D model
 ```
 
-Open GeoTIFFs in [QGIS](https://qgis.org), point clouds in [CloudCompare](https://www.cloudcompare.org) and meshes in [MeshLab](https://www.meshlab.net).
+Open GeoTIFFs in [QGIS](https://qgis.org), point clouds in [CloudCompare](https://www.cloudcompare.org) and meshes in [MeshLab](https://www.meshlab.net). [Outputs](https://aidronemap.dev/engine/outputs/) lists every file the engine writes.
 
 ## Platforms
 
