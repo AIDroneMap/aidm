@@ -16,7 +16,31 @@ from xml.parsers.expat import ExpatError
 from opensfm.sensors import sensor_data
 from opensfm.geo import ecef_from_lla
 
+# XMP packets sit near the start of the file, so read this much first
+XMP_PREFIX_SIZE = 1024 * 1024
+
 projections = ['perspective', 'fisheye', 'fisheye_opencv', 'brown', 'dual', 'equirectangular', 'spherical']
+
+def find_xmp_packet(file, prefix_size=XMP_PREFIX_SIZE):
+    """
+    Return the raw bytes of the first XMP packet in a binary file, or None.
+    Reads only the first prefix_size bytes when the whole packet is in them.
+    """
+    head = file.read(prefix_size)
+    xmp_start = head.find(b'<x:xmpmeta')
+    xmp_end = head.find(b'</x:xmpmeta')
+
+    if xmp_start != -1 and xmp_start < xmp_end and xmp_end + 12 <= len(head):
+        return head[xmp_start:xmp_end + 12]
+
+    # Packet missing or cut by the prefix: read the rest and search it all
+    img_bytes = head + file.read()
+    xmp_start = img_bytes.find(b'<x:xmpmeta')
+    xmp_end = img_bytes.find(b'</x:xmpmeta')
+
+    if xmp_start < xmp_end:
+        return img_bytes[xmp_start:xmp_end + 12]
+    return None
 
 def find_mean_utc_time(photos):
     utc_times = []
@@ -598,12 +622,10 @@ class ODM_Photo:
     
     # From https://github.com/mapillary/OpenSfM/blob/master/opensfm/exif.py
     def get_xmp(self, file):
-        img_bytes = file.read()
-        xmp_start = img_bytes.find(b'<x:xmpmeta')
-        xmp_end = img_bytes.find(b'</x:xmpmeta')
+        xmp_bytes = find_xmp_packet(file)
 
-        if xmp_start < xmp_end:
-            xmp_str = img_bytes[xmp_start:xmp_end + 12].decode('utf8')
+        if xmp_bytes is not None:
+            xmp_str = xmp_bytes.decode('utf8')
             try:
                 xdict = x2d.parse(xmp_str)
             except ExpatError as e:
