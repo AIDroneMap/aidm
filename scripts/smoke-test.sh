@@ -128,6 +128,11 @@ run_engine() {
     mkdir -p "$WORK/project"
     cp -r "$DATASET_DIR/images" "$WORK/project/images"
 
+    # Record how OpenCV was built, including the CPU features it dispatches
+    # on, so every smoke test log shows them
+    log "OpenCV build information"
+    docker run --rm --entrypoint python3 "$IMAGE" -c 'import cv2; print(cv2.getBuildInformation())'
+
     log "Running $IMAGE $OPTIONS"
     # OPTIONS is a list of flags, so word splitting is wanted here
     # shellcheck disable=SC2086
