@@ -209,7 +209,7 @@ externalproject_add(dem2mesh
 
 externalproject_add(dem2points
     GIT_REPOSITORY    https://github.com/WebODM/dem2points.git
-    GIT_TAG           master
+    GIT_TAG           4527122615f41044bde0e79850464ed33549ceeb
     PREFIX            ${SB_BINARY_DIR}/dem2points
     SOURCE_DIR        ${SB_SOURCE_DIR}/dem2points
     CMAKE_ARGS        -DCMAKE_INSTALL_PREFIX:PATH=${SB_INSTALL_DIR}
