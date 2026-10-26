@@ -21,6 +21,7 @@ class GeoFile:
             self.raw_srs = lines[0]  # SRS
             self.srs = location.parse_srs_header(self.raw_srs)
             longlat = CRS.from_epsg("4326")
+            t = location.transformer(self.srs, longlat)
 
             for line in lines[1:]:
                 if line != "" and line[0] != "#":
@@ -33,9 +34,9 @@ class GeoFile:
 
                         # Always convert coordinates to WGS84
                         if z is not None:
-                            x, y, z = location.transform3(self.srs, longlat, x, y, z)
+                            x, y, z = t.TransformPoint(x, y, z)
                         else:
-                            x, y = location.transform2(self.srs, longlat, x, y)
+                            x, y = t.TransformPoint(x, y, 0)[:2]
 
                         yaw = pitch = roll = None
 
