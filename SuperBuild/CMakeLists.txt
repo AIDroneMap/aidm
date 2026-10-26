@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.28)
 
 project(ODX-SuperBuild)
 
+# The Docker images build this directory in a single layer, before the rest
+# of the repository is copied. A change to any file here rebuilds that layer,
+# so every dependency compiles again. See the comment at the top of the
+# Dockerfile.
+
 # Setup SuperBuild root location
 set(SB_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
