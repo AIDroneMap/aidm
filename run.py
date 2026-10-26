@@ -6,6 +6,10 @@ if sys.version_info.major < 3:
     print("AIDM needs Python 3, but it was launched with Python 2. Run it with: python3 run.py ...")
     sys.exit(1)
 
+# Stop on CPUs older than the build target, before importing compiled tools
+from modules import cpu
+cpu.check()
+
 import os
 from modules import log
 from modules import config
