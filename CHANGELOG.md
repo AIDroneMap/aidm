@@ -2,6 +2,19 @@
 
 AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX version it is based on.
 
+## Unreleased
+
+### Changed
+
+- Both images are built for modern CPUs. Every C++ tool, dependencies included, is compiled for x86-64-v3 (AVX2, FMA, BMI2) on x86-64 and for ARMv8.2-A on arm64, instead of Nehalem (2008, no AVX) and ARMv8.0-A. This reverses "The CPU image is built for a generic CPU" from 0.1.0. See "Hardware we build for" in `README.md` and [ADR 0001](docs/adr/0001-build-for-modern-cpus.md).
+- The minimum CPU is now Intel Haswell (2013) or AMD Zen (2017) on x86-64, and ARMv8.2-A on arm64 (AWS Graviton 2, Ampere Altra, Apple M1, Raspberry Pi 5). Older CPUs, including the Raspberry Pi 4, are not supported.
+- OpenSfM, OpenMVS, mvs-texturing, FPCFilter, RenderDEM and odm_orthophoto are built with link-time optimisation.
+- `configure.sh install` replaces gcc and g++ with the wrappers in `docker/` when `CPU_TARGET_INSTALL=YES` is set. The old name, `PORTABLE_INSTALL`, no longer does anything.
+
+### Added
+
+- The engine checks the CPU at start. On a CPU below the minimum it stops with one line, for example `AIDM needs a CPU with AVX2 and FMA (2013 or later). This CPU does not have them.`, instead of crashing later with an illegal instruction.
+
 ## 0.1.0
 
 The first AIDM release, based on the ODX 3.8.4 engine. Processing is unchanged, so results match ODX 3.8.4, and this release makes no performance or accuracy claims. What is new is how the engine is built, tested and shipped.
