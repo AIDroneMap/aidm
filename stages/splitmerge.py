@@ -295,7 +295,7 @@ class ODMMergeStage(types.ODM_Stage):
                     if human_name == "DTM":
                         eu_map_source = "dsm"
 
-                    euclidean_merge_dems(all_dems, dem_file, dem_vars, euclidean_map_source=eu_map_source)
+                    euclidean_merge_dems(all_dems, dem_file, dem_vars, euclidean_map_source=eu_map_source, max_workers=args.max_concurrency)
 
                     if io.file_exists(dem_file):
                         # Crop
