@@ -1,4 +1,6 @@
-The g++ and gcc scripts in this directory replace the real g++ and gcc programs when configure.sh runs with CPU_TARGET_INSTALL=YES, as both Dockerfiles do. They drop every -march flag and compile every project, dependencies included, for one CPU target: -march=x86-64-v3 on x86-64 and -march=armv8.2-a on arm64.
+The g++ and gcc scripts in this directory replace the real g++ and gcc programs when configure.sh runs with CPU_TARGET_INSTALL=YES, as both Dockerfiles do. They compile every project, dependencies included, for one CPU target: -march=x86-64-v3 on x86-64 and -march=armv8.2-a on arm64. They drop every -march flag a build system passes, except the target plus extensions, such as -march=armv8.2-a+dotprod.
+
+OpenCV needs that exception. It compiles a few kernels with such a flag, one file each, and calls them only on CPUs that have the extension. On arm64 these are its NEON_DOTPROD and NEON_FP16 kernels. No other project in the SuperBuild passes such a flag.
 
 One target for every project keeps the image consistent, and stops a dependency from compiling for the CPU of the build machine with -march=native.
 
