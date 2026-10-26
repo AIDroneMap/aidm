@@ -5,7 +5,9 @@ from math import ceil, floor
 import time
 import cv2
 import os
+import shutil
 import sys
+import tempfile
 import zipfile
 import collections
 import platform
@@ -33,6 +35,25 @@ class Video2Dataset:
         if not os.path.exists(self.output):
             os.makedirs(self.output)
 
+        # With a frame limit, frames are encoded when selected but written to
+        # their final path only at the end, once we know which ones are kept.
+        # Until then the encoded frame waits in a temporary folder next to the
+        # output folder, so nothing but final frames ever appears in it.
+        self.limited = self.limit is not None and self.limit > 0
+        self.pending = []
+        self.temp_dir = None
+        if self.limited:
+            parent = os.path.dirname(os.path.abspath(self.output))
+            self.temp_dir = tempfile.mkdtemp(prefix=".video-frames-", dir=parent)
+
+        try:
+            return self._process_videos()
+        finally:
+            if self.temp_dir is not None:
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
+                self.temp_dir = None
+
+    def _process_videos(self):
         self.date_now = None
         start = time.time()
 
@@ -147,7 +168,9 @@ class Video2Dataset:
 
         if self.limit is not None and self.limit > 0 and self.global_idx >= self.limit:
             log.INFO("Limit of {} frames reached, trimming dataset".format(self.limit))
-            output_file_paths = limit_files(output_file_paths, self.limit)
+
+        if self.limited:
+            output_file_paths = self._write_kept_frames(output_file_paths)
 
         end = time.time()
         log.INFO("Total processing time: {:.2f}s".format(end - start))
@@ -204,16 +227,13 @@ class Video2Dataset:
                 factor = max_dim / m
                 frame = cv2.resize(frame, (int(ceil(w * factor)), int(ceil(h * factor))), interpolation=cv2.INTER_AREA)
 
-        path = os.path.join(self.output,
-            "{}_{}_{}.{}".format(video_info.basename, self.global_idx, self.frame_index, self.frame_format))
+        path = self.FramePath(video_info)
 
         _, buf = cv2.imencode('.' + self.frame_format, frame)
 
         delta = datetime.timedelta(seconds=(self.frame_index / video_info.frame_rate))
         elapsed_time = datetime.datetime(1900, 1, 1) + delta
 
-        img = Image.open(io.BytesIO(buf))
-        
         entry = gps_coords = None
         if loc_parser is not None:
             entry = loc_parser.get_entry(elapsed_time)
@@ -256,9 +276,49 @@ class Video2Dataset:
             exif_dict["GPS"] = get_gps_location(elapsed_time, gps_coords[1], gps_coords[0], gps_coords[2])
 
         exif_bytes = piexif.dump(exif_dict)
-        img.save(path, exif=exif_bytes, quality=95)
+
+        if self.temp_dir is None:
+            self._write_frame(buf, path, exif_bytes)
+        else:
+            temp_path = os.path.join(self.temp_dir, "{}.{}".format(len(self.pending), self.frame_format))
+            with open(temp_path, "wb") as f:
+                f.write(buf.tobytes())
+            self.pending.append((path, temp_path, exif_bytes))
 
         return path
+
+    def FramePath(self, video_info):
+        return os.path.join(self.output,
+            "{}_{}_{}.{}".format(video_info.basename, self.global_idx, self.frame_index, self.frame_format))
+
+    def _write_frame(self, buf, path, exif_bytes):
+        img = Image.open(io.BytesIO(buf))
+        img.save(path, exif=exif_bytes, quality=95)
+
+    def _write_kept_frames(self, paths):
+        """Keep the same evenly spaced frames that limit_files keeps and write
+        them to their final path. The other frames are never written."""
+        if len(paths) <= self.limit:
+            keep = list(range(len(paths)))
+        else:
+            keep = [int(i) for i in np.linspace(0, len(paths) - 1, self.limit, dtype=int)]
+        keep_set = set(keep)
+
+        for idx, (path, temp_path, _) in enumerate(self.pending):
+            if idx not in keep_set:
+                os.remove(temp_path)
+                if os.path.isfile(path):
+                    os.remove(path)
+
+        for idx in keep:
+            path, temp_path, exif_bytes = self.pending[idx]
+            with open(temp_path, "rb") as f:
+                buf = f.read()
+            self._write_frame(buf, path, exif_bytes)
+            os.remove(temp_path)
+
+        self.pending = []
+        return [paths[i] for i in keep]
 
 
 def get_video_info(input_file):
