@@ -102,7 +102,8 @@ jobs:
     needs: check
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 360
+    # About 1.5 times the measured job time, build and smoke test included
+    timeout-minutes: ${{ matrix.timeout }}
     permissions:
       contents: read
       packages: write
@@ -116,15 +117,18 @@ jobs:
             runner: ubuntu-24.04
             dockerfile: Dockerfile
             platform: linux/amd64
+            timeout: 90
           - name: cpu-arm64
             runner: ubuntu-24.04-arm
             dockerfile: Dockerfile
             platform: linux/arm64
+            timeout: 70
           # The runner has no GPU, so the smoke test runs this image on the CPU
           - name: gpu-amd64
             runner: ubuntu-24.04
             dockerfile: gpu.Dockerfile
             platform: linux/amd64
+            timeout: 120
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
