@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Compile everything for the CPU target of the AIDM images, whatever
+# -march a build system asks for, -march=native included. See docker/README.
+
 declare -a args
 
 for i in "$@"
@@ -9,9 +12,11 @@ do
     fi
 done
 
-ARCH=nehalem
+# x86-64-v3: AVX2, FMA and BMI2 (Intel Haswell, AMD Zen and later).
+# armv8.2-a: AWS Graviton 2, Ampere Altra, Apple M1, Raspberry Pi 5 and later.
+ARCH=x86-64-v3
 if [[ $(uname -m) == "aarch64" ]]; then
-    ARCH=armv8-a
+    ARCH=armv8.2-a
 fi
 
 /usr/bin/gcc_real -march=$ARCH "${args[@]}"
