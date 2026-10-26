@@ -14,7 +14,7 @@ COPY . ./
 # Run the build
 # Compile for the AIDM CPU target (x86-64-v3 or armv8.2-a), not for the
 # CPU of the build machine. See docker/README.
-RUN CPU_TARGET_INSTALL=YES GPU_INSTALL=YES bash configure.sh install
+RUN CPU_TARGET_INSTALL=YES bash configure.sh install
 
 # Clean Superbuild
 RUN bash configure.sh clean
