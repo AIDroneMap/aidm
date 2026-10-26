@@ -10,8 +10,9 @@ def classify(point_cloud, max_threads=8):
         os.remove(tmp_output)
 
     try:
+        model_url = "https://github.com/uav4geo/OpenPointClass/releases/download/v1.1.3/vehicles-vegetation-buildings.zip"
         model = get_model("openpointclass", 
-            "https://github.com/uav4geo/OpenPointClass/releases/download/v1.1.3/vehicles-vegetation-buildings.zip", 
+            model_url,
             "v1.0.0",
             name="model.bin")
 
