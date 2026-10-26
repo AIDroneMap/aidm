@@ -21,4 +21,6 @@ The engine checks the CPU before it loads any compiled tool and stops with one l
 
 - A crash or the start-up message on a CPU below the minimum is expected and documented. It is not a bug.
 - Pull requests that add compatibility for older CPUs, or that reopen this decision, are declined. `AGENTS.md` says so for agents.
+- The new target brings no speed gain. Measured on an AMD Ryzen 9 9900X, full runs take the same time as with 0.1.0, and the openmvs stage is up to 8% slower on a small dataset. A profile of DensifyPointCloud shows its main loop costs the same in both builds; the extra time comes from GCC inlining some small functions differently. The decision rests on the hardware AIDM targets, not on speed.
+- Link-time optimisation was tried and left out. It made OpenMVS 7.9% slower on a 524-image dataset and did not make any other stage measurably faster.
 - AVX-512 builds and profile-guided optimisation are separate questions, to decide after the profiling work.
