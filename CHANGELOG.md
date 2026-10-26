@@ -11,6 +11,7 @@ AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX 
 - The new target does not make the engine faster. On an AMD Ryzen 9 9900X, against 0.1.0 built from the same commit, a full run takes the same time: 124.6 s against 125.1 s on Brighton Beach (18 images) and 302.3 s against 305.3 s on aidm-vineyard-small (73 images). Most stages change by less than 4%. The openmvs stage is 0.2% slower on aidm-vineyard-small and 6% to 8% slower on Brighton Beach (about 2 s of 29 s).
 - `configure.sh install` replaces gcc and g++ with the wrappers in `docker/` when `CPU_TARGET_INSTALL=YES` is set. The old name, `PORTABLE_INSTALL`, no longer does anything.
 - `--sky-removal` needs less memory, and its sky masks may differ from 0.1.0 by a few pixels on the mask edge. The sky filter runs in float32 and frees the full image as soon as it can, so a 20 megapixel image needs 0.75 GiB instead of 1.8 GiB. It also runs only as many images at once as fit in half the free memory. On Brighton Beach with 24 threads, the dataset stage peaks at 4.2 GiB instead of 10.4 GiB. Its masks there are byte-identical, but in a synthetic worst case 5 pixels out of 54 million flip, all on the mask edge.
+- The build pins dem2points to commit `4527122` and Abseil to the `20260107.1` release, instead of following branches. Both are the code the branches pointed to, so the built code does not change. The Ceres version check now asks for 2.2.0, the version the build downloads, and two build settings that nothing read (`BUILD_opencv_gpu`, `GPU_INSTALL`) are gone.
 
 ### Added
 
@@ -21,6 +22,10 @@ AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX 
 - The arm64 image now has OpenCV's NEON_DOTPROD and NEON_FP16 kernels, which OpenCV runs on CPUs that support them. The compiler wrappers dropped the `-march=armv8.2-a+dotprod` and `-march=armv8.2-a+fp16` flags OpenCV builds them with, so the arm64 build had no dispatched kernels at all (#10). The smoke test on the GitHub arm64 runner shows no measurable change: opensfm took 51.8 s and 51.5 s before the fix and 51.5 s after.
 - The release workflow accepts the manifest digest as proof that the pushed image is the tested one. Docker 29 on the GitHub runners uses the containerd image store, which reports that digest instead of the config digest, so every GPU image check failed from 26 October 2026.
 - The cut and feathered orthophotos of split-merge submodels (`odm_orthophoto_cut.tif`, `odm_orthophoto_feathered.tif`) are computed in windows of about 4 megapixels instead of whole bands. On a 181 megapixel orthophoto the engine process peaks at 1.5 GiB instead of 4.1 GiB in the orthophoto stage, and the files are byte-identical.
+- Orthophoto merge in split-merge runs stops reading the remaining submodels in its first pass once a block is fully covered. The check compared the covered pixel count with the block width instead of the block area, so it almost never stopped early. The merged pixels do not change.
+- With `--bg-removal`, a failure to make a mask for one image logs "Cannot generate mask for <image>" again. Before, it raised a `NameError` and stopped the dataset stage.
+- When the point classification model cannot be downloaded, the warning names the model URL. Before, a `NameError` hid the cause behind a generic "Cannot classify using OpenPointClass" warning.
+- The GPU image no longer starts `PYTHONPATH` with an empty entry, which made Python import from the current directory.
 
 ## 0.1.0
 
