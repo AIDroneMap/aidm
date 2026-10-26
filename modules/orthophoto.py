@@ -10,7 +10,8 @@ import rasterio
 import fiona
 from edt import edt
 from rasterio.transform import Affine, rowcol
-from rasterio.mask import mask
+from rasterio.windows import Window
+import shapely.geometry
 from modules import io
 from modules.tiles.tiler import generate_orthophoto_tiles
 from modules.cogeo import convert_to_cogeo
@@ -179,6 +180,103 @@ def post_orthophoto_steps(args, bounds_file_path, orthophoto_file, orthophoto_ti
     generate_extent_polygon(orthophoto_file)
     generate_tfw(orthophoto_file)
 
+# compute_mask_raster and feather_raster process windows of about this many
+# pixels (plus the blend margin), so their memory does not grow with the
+# orthophoto
+WINDOW_PIXELS = 4096 * 1024
+
+def processing_windows(rast):
+    """
+    Windows of about WINDOW_PIXELS px that cover rast, aligned to its blocks.
+    They go one row of blocks at a time, left to right (whole strips for an
+    untiled raster). Writing them in this order fills the blocks in the order
+    of one write of the whole raster, so the GeoTIFF gets the same bytes.
+    """
+    block_h, block_w = rast.block_shapes[0]
+    if block_w >= rast.width:
+        win_w = rast.width
+        win_h = max(block_h, (WINDOW_PIXELS // rast.width) // block_h * block_h)
+    else:
+        win_h = block_h
+        win_w = max(block_w, (WINDOW_PIXELS // block_h) // block_w * block_w)
+
+    for row in range(0, rast.height, win_h):
+        for col in range(0, rast.width, win_w):
+            yield Window(col, row, min(win_w, rast.width - col), min(win_h, rast.height - row))
+
+def blended_windows(rast, read, blend_distance):
+    """
+    Yield (window, bands) for each processing window of rast, where bands come
+    from read(window) and the last (alpha) band fades to 0 over blend_distance
+    px towards transparent pixels.
+
+    This gives the same bytes as running edt(alpha, black_border=True) on the
+    whole raster. A pixel closer than blend_distance to a transparent pixel
+    has that pixel inside the window margin, so it gets the same distance.
+    A farther pixel gets a distance above blend_distance either way, and so
+    the same factor of 1.
+    """
+    blend = blend_distance > 0 and rast.count >= 4
+    margin = int(math.ceil(blend_distance)) + 1 if blend else 0
+
+    for window in processing_windows(rast):
+        if not blend:
+            yield window, read(window)
+            continue
+
+        top = max(0, window.row_off - margin)
+        left = max(0, window.col_off - margin)
+        bottom = min(rast.height, window.row_off + window.height + margin)
+        right = min(rast.width, window.col_off + window.width + margin)
+        bands = read(Window(left, top, right - left, bottom - top))
+
+        # One row or column of transparent pixels where the window meets the
+        # raster edge, as black_border does. Window edges inside the raster
+        # get none: the margin holds the real neighbours.
+        pad = ((int(top == 0), int(bottom == rast.height)), (int(left == 0), int(right == rast.width)))
+        dist_t = edt(np.pad(bands[-1], pad), black_border=False, parallel=0)
+
+        row = window.row_off - top
+        col = window.col_off - left
+        dist_t = dist_t[row + pad[0][0]:row + pad[0][0] + window.height, col + pad[1][0]:col + pad[1][0] + window.width]
+        bands = bands[:, row:row + window.height, col:col + window.width]
+
+        alpha_band = bands[-1]
+        dist_t[dist_t <= blend_distance] /= blend_distance
+        dist_t[dist_t > blend_distance] = 1
+        np.multiply(alpha_band, dist_t, out=alpha_band, casting="unsafe")
+
+        yield window, bands
+
+def rasterize_shapes(shapes, rast, output_raster):
+    """
+    Write a single band uint8 GeoTIFF on the grid of rast, with 1 inside shapes
+    and 0 outside. GDAL rasterizes it a few rows at a time, so the whole mask
+    is never in memory. This is the GDALRasterizeGeometries call that
+    rasterio.mask makes (pixel centres, no ALL_TOUCHED), so the pixels match.
+    """
+    ds = gdal.GetDriverByName("GTiff").Create(output_raster, rast.width, rast.height, 1, gdal.GDT_Byte,
+                                              ["TILED=YES", "COMPRESS=DEFLATE", "BIGTIFF=IF_SAFER", "SPARSE_OK=TRUE"])
+    if ds is None:
+        raise IOError("Cannot create %s: %s" % (output_raster, gdal.GetLastErrorMsg()))
+    ds.SetGeoTransform(rast.transform.to_gdal())
+
+    # No spatial reference on either side, so GDAL does not reproject,
+    # like rasterio.mask, which assumes the shapes are in the raster CRS
+    vector = gdal.GetDriverByName("Memory").Create("", 0, 0, 0, gdal.GDT_Unknown)
+    layer = vector.CreateLayer("shapes", geom_type=ogr.wkbUnknown)
+    for geom in shapes:
+        feature = ogr.Feature(layer.GetLayerDefn())
+        feature.SetGeometry(ogr.CreateGeometryFromWkb(shapely.geometry.shape(geom).wkb))
+        layer.CreateFeature(feature)
+
+    # Without GDAL exceptions a failure only shows in the return value. Do not
+    # let it pass: an empty mask would make the whole orthophoto transparent.
+    if not gdal.Rasterize(ds, vector, burnValues=[1]):
+        raise IOError("Cannot rasterize the cutline into %s: %s" % (output_raster, gdal.GetLastErrorMsg()))
+    ds = None
+    vector = None
+
 def compute_mask_raster(input_raster, vector_mask, output_raster, blend_distance=20, only_max_coords_feature=False):
     if not os.path.exists(input_raster):
         log.WARNING("Cannot mask raster, %s does not exist" % input_raster)
@@ -207,22 +305,29 @@ def compute_mask_raster(input_raster, vector_mask, output_raster, blend_distance
                     burn_features = [max_coords_feature]
             
             shapes = [feature["geometry"] for feature in burn_features]
-            out_image, out_transform = mask(rast, shapes, nodata=0)
 
-            if blend_distance > 0:
-                if out_image.shape[0] >= 4:
-                    # alpha_band = rast.dataset_mask()
-                    alpha_band = out_image[-1]
-                    dist_t = edt(alpha_band, black_border=True, parallel=0)
-                    dist_t[dist_t <= blend_distance] /= blend_distance
-                    dist_t[dist_t > blend_distance] = 1
-                    np.multiply(alpha_band, dist_t, out=alpha_band, casting="unsafe")
-                else:
-                    log.WARNING("%s does not have an alpha band, cannot blend cutline!" % input_raster)
+            if blend_distance > 0 and rast.count < 4:
+                log.WARNING("%s does not have an alpha band, cannot blend cutline!" % input_raster)
 
-            with rasterio.open(output_raster, 'w', BIGTIFF="IF_SAFER", **rast.profile) as dst:
-                dst.colorinterp = rast.colorinterp
-                dst.write(out_image)
+            inside_file = io.related_file_path(output_raster, postfix=".inside")
+            try:
+                rasterize_shapes(shapes, rast, inside_file)
+
+                with rasterio.open(inside_file, 'r') as inside:
+                    def read_masked(window):
+                        # What rasterio.mask.mask(rast, shapes, nodata=0) does,
+                        # for one window
+                        out_image = rast.read(window=window, masked=True)
+                        out_image.mask = out_image.mask | (inside.read(1, window=window) == 0)
+                        return out_image.filled(0)
+
+                    with rasterio.open(output_raster, 'w', BIGTIFF="IF_SAFER", **rast.profile) as dst:
+                        dst.colorinterp = rast.colorinterp
+                        for window, bands in blended_windows(rast, read_masked, blend_distance):
+                            dst.write(bands, window=window)
+            finally:
+                if os.path.exists(inside_file):
+                    os.remove(inside_file)
 
             return output_raster
 
@@ -234,20 +339,13 @@ def feather_raster(input_raster, output_raster, blend_distance=20):
     log.INFO("Computing feather raster: %s" % output_raster)
     
     with rasterio.open(input_raster, 'r') as rast:
-        out_image = rast.read()
-        if blend_distance > 0:
-            if out_image.shape[0] >= 4:
-                alpha_band = out_image[-1]
-                dist_t = edt(alpha_band, black_border=True, parallel=0)
-                dist_t[dist_t <= blend_distance] /= blend_distance
-                dist_t[dist_t > blend_distance] = 1
-                np.multiply(alpha_band, dist_t, out=alpha_band, casting="unsafe")
-            else:
-                log.WARNING("%s does not have an alpha band, cannot feather raster!" % input_raster)
+        if blend_distance > 0 and rast.count < 4:
+            log.WARNING("%s does not have an alpha band, cannot feather raster!" % input_raster)
 
         with rasterio.open(output_raster, 'w', BIGTIFF="IF_SAFER", **rast.profile) as dst:
             dst.colorinterp = rast.colorinterp
-            dst.write(out_image)
+            for window, bands in blended_windows(rast, lambda window: rast.read(window=window), blend_distance):
+                dst.write(bands, window=window)
 
         return output_raster
 
