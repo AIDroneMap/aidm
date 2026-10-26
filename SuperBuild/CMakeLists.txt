@@ -224,8 +224,6 @@ externalproject_add(odm_orthophoto
     PREFIX            ${SB_BINARY_DIR}/odm_orthophoto
     SOURCE_DIR        ${SB_SOURCE_DIR}/odm_orthophoto
     CMAKE_ARGS        -DCMAKE_INSTALL_PREFIX:PATH=${SB_INSTALL_DIR}
-                      -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON
-                      -DCMAKE_POLICY_DEFAULT_CMP0069=NEW
                       ${WIN32_CMAKE_ARGS} ${WIN32_GDAL_ARGS}
 )
 
