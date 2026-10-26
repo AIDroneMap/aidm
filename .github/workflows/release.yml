@@ -206,10 +206,7 @@ jobs:
           PUSHED_TO: ${{ needs.check.outputs.publish == 'true' && env.IMAGE || env.CI_IMAGE }}
         run: |
           echo "Tested $TESTED, pushed $PUSHED as $PUSHED_TO@$DIGEST"
-          if [ -z "$TESTED" ] || [ "$TESTED" != "$PUSHED" ]; then
-            echo "::error::The pushed image differs from the tested image"
-            exit 1
-          fi
+          scripts/check-pushed-image.sh "$TESTED" "$PUSHED" "$DIGEST"
           mkdir -p digests
           echo "$DIGEST" > "digests/$NAME"
           if [ "$NAME" = "gpu-amd64" ]; then
