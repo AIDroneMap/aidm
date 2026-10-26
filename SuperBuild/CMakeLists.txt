@@ -138,7 +138,7 @@ set(ODM_GFlags_Version 2.2.2)
 option(ODM_BUILD_GFlags "Force to build GFlags library" OFF)
 SETUP_EXTERNAL_PROJECT(GFlags ${ODM_GFlags_Version} ${ODM_BUILD_GFlags})
 
-set(ODM_Ceres_Version 2.0.0)
+set(ODM_Ceres_Version 2.2.0)
 option(ODM_BUILD_Ceres "Force to build Ceres library" OFF)
 SETUP_EXTERNAL_PROJECT(Ceres ${ODM_Ceres_Version} ${ODM_BUILD_Ceres})
 
