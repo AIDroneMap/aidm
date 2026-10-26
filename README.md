@@ -70,6 +70,12 @@ docker build -t aidm .
 docker build -f gpu.Dockerfile -t aidm:gpu .
 ```
 
+#### Build cache
+
+The first build compiles the C++ dependencies in the SuperBuild step, which is the slow part. After that, `docker build` reuses the SuperBuild layer as long as `configure.sh`, `requirements.txt`, `docker/` and `SuperBuild/` stay the same. A change to Python code, tests or docs recompiles nothing. A change to one of those four inputs rebuilds from the SuperBuild step on.
+
+On CI, the release workflow keeps the layers in the `ghcr.io/aidronemap/aidm-buildcache` package, one tag per variant: `cpu-amd64`, `cpu-arm64` and `gpu-amd64`. The package holds cache layers only, never a published image. Each run, dry run or release, overwrites the tag of its variant. So after a dry run on a branch that changes `SuperBuild/`, the next build of `master` compiles the dependencies again. To clear the cache, delete the package versions in the organization's package settings on GitHub, or delete the whole package. The next run rebuilds everything and fills the cache again.
+
 ### Results
 
 When processing finishes, the project folder contains:
