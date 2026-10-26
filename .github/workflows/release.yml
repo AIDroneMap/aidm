@@ -241,7 +241,7 @@ jobs:
     needs: build
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 120
     environment: modal-gpu
     permissions:
       contents: read
@@ -257,7 +257,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/modal"
           "$RUNNER_TEMP/modal/bin/pip" install --quiet modal==1.6.2
 
-      # The Sandbox lives at most 40 minutes (SMOKE_TIMEOUT) and is not retried.
+      # The Sandbox lives at most 100 minutes (SMOKE_TIMEOUT) and is not retried.
       # Builder 2025.06 adds nothing to a registry image, so the engine keeps
       # its own Python.
       - name: Run the engine on a GPU
@@ -269,7 +269,7 @@ jobs:
           REGISTRY_USERNAME: ${{ github.actor }}
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
           SMOKE_GPU: T4
-          SMOKE_TIMEOUT: "2400"
+          SMOKE_TIMEOUT: "6000"
           GPU_IMAGE: ${{ needs.build.outputs.gpu-image }}
         run: '"$RUNNER_TEMP/modal/bin/python" scripts/gpu-smoke-modal.py "$GPU_IMAGE"'
 

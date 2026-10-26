@@ -6,7 +6,9 @@
 # same dataset as scripts/smoke-test.sh, and checks that:
 #   - the engine found the GPU ("nvidia-smi detected");
 #   - every DensifyPointCloud run used the GPU (--cuda-device -1, never -2);
-#   - the outputs listed in scripts/smoke-test.conf exist and are not empty.
+#   - the outputs listed in scripts/smoke-test.conf exist and are not empty;
+#   - the orthophoto is georeferenced where the images were taken
+#     (scripts/check-georeferencing.py, run in the Sandbox).
 # It prints the engine log, the GPU, the driver, the wall time and a cost
 # estimate, and exits non-zero on any failure.
 #
@@ -24,8 +26,11 @@
 #   SMOKE_MEMORY     memory for the Sandbox in MiB (default: 16384)
 #   SMOKE_TIMEOUT    Sandbox lifetime in seconds (default: 2400)
 #   SMOKE_OPTIONS    engine options (default: DEFAULT_OPTIONS in smoke-test.conf)
-#   SMOKE_CACHE      where the dataset is downloaded once
+#   SMOKE_CACHE      where the dataset zip is downloaded once
 #                    (default: ~/.cache/aidm-smoke-test)
+#
+# Like scripts/smoke-test.sh, every run checks the SHA-256 of the dataset zip
+# and the image count before it uploads the images.
 #
 # Everything it creates on Modal is ephemeral: one app that stops when the
 # script ends, one Sandbox, and a registry secret that exists for this run
@@ -33,16 +38,19 @@
 #
 # Needs the modal Python package; the release workflow pins its version.
 
+import hashlib
 import os
 import re
 import shlex
 import sys
-import tarfile
+import tempfile
 import time
 import urllib.request
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONF = os.path.join(HERE, "smoke-test.conf")
+GEOREF_CHECK = os.path.join(HERE, "check-georeferencing.py")
 
 APP_NAME = "aidm-gpu-smoke"
 PROJECT = "/datasets/project"
@@ -125,32 +133,47 @@ def cuda_version(header):
     return match.group(1) if match else None
 
 
-def fetch_dataset(config, cache):
-    """Download the dataset images once, at the pinned commit."""
-    commit = config["DATASET_COMMIT"]
+def sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def fetch_dataset(config, cache, folder):
+    """Return the paths of the dataset images, unpacked into folder.
+
+    Downloads the dataset zip into cache once, at the pinned commit. On every
+    run, checks its SHA-256 and the image count before use. Raises
+    RuntimeError with one plain line on a mismatch.
+    """
+    name = config["DATASET_ZIP"]
     expected = int(config["DATASET_IMAGES"])
-    folder = os.path.join(cache, "brighton_beach-%s" % commit)
-    images = os.path.join(folder, "images")
+    path = os.path.join(cache, config["DATASET_COMMIT"], name)
 
-    if not os.path.isdir(images):
-        url = "%s/archive/%s.tar.gz" % (config["DATASET_REPO"], commit)
-        log("Downloading dataset to %s" % folder)
-        tmp = folder + ".tmp"
-        os.makedirs(os.path.join(tmp, "images"), exist_ok=True)
-        with urllib.request.urlopen(url) as response:
-            with tarfile.open(fileobj=response, mode="r|gz") as archive:
-                for member in archive:
-                    parts = member.name.split("/")
-                    if member.isfile() and len(parts) == 3 and parts[1] == "images":
-                        with archive.extractfile(member) as src:
-                            with open(os.path.join(tmp, "images", parts[2]), "wb") as dst:
-                                dst.write(src.read())
-        os.rename(tmp, folder)
+    if not os.path.isfile(path):
+        url = "%s/resolve/%s/%s" % (config["DATASET_REPO"], config["DATASET_COMMIT"], name)
+        log("Downloading %s to %s" % (name, os.path.dirname(path)))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with urllib.request.urlopen(url) as response, open(path + ".tmp", "wb") as f:
+            for block in iter(lambda: response.read(1 << 20), b""):
+                f.write(block)
+        os.rename(path + ".tmp", path)
 
-    files = sorted(f for f in os.listdir(images) if f.lower().endswith(".jpg"))
+    actual = sha256(path)
+    if actual != config["DATASET_SHA256"]:
+        os.remove(path)
+        raise RuntimeError("%s has SHA-256 %s, expected %s; removed it, run again to download it again"
+                           % (path, actual, config["DATASET_SHA256"]))
+
+    with zipfile.ZipFile(path) as archive:
+        archive.extractall(folder)
+    files = sorted(f for f in os.listdir(folder) if f.lower().endswith(".jpg"))
     if len(files) != expected:
-        raise RuntimeError("expected %d images in %s, found %d" % (expected, images, len(files)))
-    return [os.path.join(images, f) for f in files]
+        raise RuntimeError("expected %d images in %s, found %d" % (expected, name, len(files)))
+    log("Dataset %s: SHA-256 ok, %d images" % (name, len(files)))
+    return [os.path.join(folder, f) for f in files]
 
 
 def run(sb, cmd, echo=True, timeout=None):
@@ -193,7 +216,12 @@ def main():
     cache = os.environ.get("SMOKE_CACHE") or os.path.expanduser("~/.cache/aidm-smoke-test")
     outputs = config["OUTPUTS"].split()
 
-    images = fetch_dataset(config, cache)
+    unpacked = tempfile.TemporaryDirectory(prefix="aidm-gpu-smoke.")
+    try:
+        images = fetch_dataset(config, cache, unpacked.name)
+    except RuntimeError as e:
+        log("FAIL: %s" % e)
+        return 1
 
     import modal
 
@@ -278,9 +306,16 @@ def main():
                 else:
                     log("MISSING OR EMPTY  %s" % out)
                     problems.append("%s is missing or empty" % out)
+
+            # Same check as scripts/smoke-test.sh, with the image's own Python
+            sb.filesystem.copy_from_local(GEOREF_CHECK, "/tmp/check-georeferencing.py")
+            code, _ = run(sb, "%s -I /tmp/check-georeferencing.py %s" % (ENGINE[0], PROJECT))
+            if code != 0:
+                problems.append("the orthophoto is not georeferenced where the images were taken")
         finally:
             sb.terminate()
             sandbox_seconds = time.monotonic() - started
+            unpacked.cleanup()
 
     gpu_line = smi.strip().splitlines()[0] if smi.strip() else "unknown"
     log("GPU: %s" % gpu_line)

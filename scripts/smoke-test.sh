@@ -2,8 +2,10 @@
 #
 # Smoke test for AIDM images.
 #
-# Processes a small public dataset and checks that the orthophoto, DSM, point
-# cloud and textured model exist and are not empty. It does not check quality.
+# Processes a public drone survey and checks that the orthophoto, DSM, point
+# cloud and textured model exist and are not empty, and that the orthophoto
+# is georeferenced where the images were taken
+# (scripts/check-georeferencing.py). It does not check quality.
 #
 # Usage:
 #   scripts/smoke-test.sh engine <image>   run the engine image directly
@@ -16,32 +18,34 @@
 #   scripts/smoke-test.sh api ghcr.io/aidronemap/aidm-api:2.5.0
 #
 # Environment:
-#   SMOKE_CACHE     where the dataset is downloaded once
+#   SMOKE_CACHE     where the dataset zip is downloaded once
 #                   (default: ~/.cache/aidm-smoke-test)
 #   SMOKE_OPTIONS   engine options, as command-line flags (default: --dsm)
-#   SMOKE_TIMEOUT   seconds to wait for an API task (default: 3600)
+#   SMOKE_TIMEOUT   seconds to wait for an API task (default: 10800)
 #   SMOKE_GPU       set to 1 to pass --gpus all to docker
 #   SMOKE_KEEP      set to 1 to keep the work folder for inspection
 #
-# Dataset: Brighton Beach, 18 images taken with a DJI drone.
-#   Source:  https://github.com/OpenDroneMap/drone_dataset_brighton_beach
+# Dataset: aidm-vineyard-small v1, 73 RGB images from a DJI Mavic 3M.
+#   Source:  https://huggingface.co/datasets/AIDroneMap/aidm-vineyard-small
 #   Commit:  pinned in scripts/smoke-test.conf
-#   Licence: BSD 2-Clause, Copyright (c) 2017, Piero Toffanin
+#   Licence: CC BY 4.0, Attribution: AIDroneMap, provided by ITALDRONI
 # The images are downloaded at run time and never committed to this repository.
+# Every run checks the SHA-256 of the zip and the image count before use.
 
 set -euo pipefail
 
 # Dataset pin, default options and expected outputs, shared with
 # scripts/gpu-smoke-modal.py
-# shellcheck source=smoke-test.conf
-source "$(dirname "${BASH_SOURCE[0]}")/smoke-test.conf"
+SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source-path=SCRIPTDIR source=smoke-test.conf
+source "$SCRIPTS/smoke-test.conf"
 
 # Outputs that must exist and be non-empty, relative to the project folder
 read -r -a OUTPUT_FILES <<< "$OUTPUTS"
 
 CACHE="${SMOKE_CACHE:-$HOME/.cache/aidm-smoke-test}"
 OPTIONS="${SMOKE_OPTIONS:-$DEFAULT_OPTIONS}"
-TIMEOUT="${SMOKE_TIMEOUT:-3600}"
+TIMEOUT="${SMOKE_TIMEOUT:-10800}"
 
 usage() {
     sed -n '/^# Usage:/,/^# Environment:/p' "$0" | sed '$d; s/^# \{0,1\}//'
@@ -62,7 +66,7 @@ MODE="$1"
 IMAGE="$2"
 [ "$MODE" = "engine" ] || [ "$MODE" = "api" ] || usage
 
-for cmd in docker curl tar python3; do
+for cmd in docker curl sha256sum python3; do
     command -v "$cmd" > /dev/null || fail "$cmd is not installed"
 done
 
@@ -71,24 +75,36 @@ if [ "${SMOKE_GPU:-0}" = "1" ]; then
     GPU_FLAGS=(--gpus all)
 fi
 
-# Download the dataset once, at a pinned commit
-fetch_dataset() {
-    local dir="$CACHE/brighton_beach-$DATASET_COMMIT"
-    if [ ! -d "$dir/images" ]; then
-        log "Downloading dataset to $dir"
-        mkdir -p "$dir.tmp"
-        curl -fsSL "$DATASET_REPO/archive/$DATASET_COMMIT.tar.gz" \
-            | tar -xz -C "$dir.tmp" --strip-components=1 --wildcards '*/images/*'
-        mv "$dir.tmp" "$dir"
-    fi
-    local count
-    count=$(find "$dir/images" -type f -iname '*.jpg' | wc -l)
-    [ "$count" -eq "$DATASET_IMAGES" ] || fail "expected $DATASET_IMAGES images in $dir/images, found $count"
-    DATASET_DIR="$dir"
-}
-
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/aidm-smoke.XXXXXX")
 CONTAINER=""
+# Images of the project, unpacked from the dataset zip for this run
+IMAGES_DIR="$WORK/project/images"
+
+# Download the dataset zip once, at the pinned commit. On every run, check its
+# SHA-256, unpack it into the work folder and count the images.
+fetch_dataset() {
+    local zip="$CACHE/$DATASET_COMMIT/$DATASET_ZIP"
+    if [ ! -f "$zip" ]; then
+        log "Downloading $DATASET_ZIP to $(dirname "$zip")"
+        mkdir -p "$(dirname "$zip")"
+        curl -fsSL --retry 3 -o "$zip.tmp" "$DATASET_REPO/resolve/$DATASET_COMMIT/$DATASET_ZIP"
+        mv "$zip.tmp" "$zip"
+    fi
+
+    local sum
+    sum=$(sha256sum "$zip" | cut -d ' ' -f 1)
+    if [ "$sum" != "$DATASET_SHA256" ]; then
+        rm -f "$zip"
+        fail "$zip has SHA-256 $sum, expected $DATASET_SHA256; removed it, run again to download it again"
+    fi
+
+    mkdir -p "$IMAGES_DIR"
+    python3 -I -m zipfile -e "$zip" "$IMAGES_DIR"
+    local count
+    count=$(find "$IMAGES_DIR" -type f -iname '*.jpg' | wc -l)
+    [ "$count" -eq "$DATASET_IMAGES" ] || fail "expected $DATASET_IMAGES images in $DATASET_ZIP, found $count"
+    log "Dataset $DATASET_ZIP: SHA-256 ok, $count images"
+}
 
 cleanup() {
     if [ -n "$CONTAINER" ]; then
@@ -104,8 +120,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Checks the outputs of the project in $WORK/project
 check_outputs() {
-    local project="$1" missing=0 size
+    local project="$WORK/project" missing=0 size
     for out in "${OUTPUT_FILES[@]}"; do
         if [ -s "$project/$out" ]; then
             size=$(stat -c %s "$project/$out")
@@ -116,6 +133,11 @@ check_outputs() {
         fi
     done
     [ "$missing" -eq 0 ] || fail "some outputs are missing or empty"
+
+    # Runs in the image under test, which has the Python packages it needs
+    docker run --rm -v "$WORK:/datasets" -v "$SCRIPTS:/smoke:ro" --entrypoint python3 "$IMAGE" \
+        -I /smoke/check-georeferencing.py /datasets/project \
+        || fail "the orthophoto is not georeferenced where the images were taken"
 }
 
 json_field() {
@@ -125,9 +147,6 @@ print(d)' "$1"
 }
 
 run_engine() {
-    mkdir -p "$WORK/project"
-    cp -r "$DATASET_DIR/images" "$WORK/project/images"
-
     # Record how OpenCV was built, including the CPU features it dispatches
     # on, so every smoke test log shows them
     log "OpenCV build information"
@@ -139,7 +158,7 @@ run_engine() {
     docker run --rm "${GPU_FLAGS[@]}" -v "$WORK:/datasets" "$IMAGE" \
         --project-path /datasets project $OPTIONS
 
-    check_outputs "$WORK/project"
+    check_outputs
 }
 
 run_api() {
@@ -175,7 +194,7 @@ print(json.dumps(opts))' $OPTIONS)
     log "Task $uuid created, uploading images"
 
     local files=() f
-    for f in "$DATASET_DIR"/images/*; do
+    for f in "$IMAGES_DIR"/*; do
         files+=(-F "images=@$f")
     done
     curl -fsS -X POST "${files[@]}" "$url/task/new/upload/$uuid" > /dev/null
@@ -203,9 +222,8 @@ print(json.dumps(opts))' $OPTIONS)
     [ -s "$WORK/all.zip" ] || fail "all.zip is empty"
     log "Downloaded all.zip ($(stat -c %s "$WORK/all.zip") bytes)"
 
-    mkdir -p "$WORK/project"
     python3 -I -m zipfile -e "$WORK/all.zip" "$WORK/project"
-    check_outputs "$WORK/project"
+    check_outputs
 }
 
 fetch_dataset

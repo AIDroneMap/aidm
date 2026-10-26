@@ -1,8 +1,10 @@
+import hashlib
 import importlib.util
 import os
 import subprocess
 import tempfile
 import unittest
+import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "scripts", "gpu-smoke-modal.py")
@@ -24,13 +26,19 @@ class TestReadConfig(unittest.TestCase):
         out = subprocess.run(
             ["bash", "-c",
              'source scripts/smoke-test.conf; printf "%s\\n" "$DATASET_REPO" '
-             '"$DATASET_COMMIT" "$DATASET_IMAGES" "$DEFAULT_OPTIONS" "$OUTPUTS"'],
+             '"$DATASET_COMMIT" "$DATASET_ZIP" "$DATASET_SHA256" "$DATASET_IMAGES" '
+             '"$DEFAULT_OPTIONS" "$OUTPUTS"'],
             cwd=ROOT, capture_output=True, text=True, check=True).stdout.splitlines()
         config = gpu_smoke.read_config(CONF)
-        keys = ["DATASET_REPO", "DATASET_COMMIT", "DATASET_IMAGES",
-                "DEFAULT_OPTIONS", "OUTPUTS"]
+        keys = ["DATASET_REPO", "DATASET_COMMIT", "DATASET_ZIP", "DATASET_SHA256",
+                "DATASET_IMAGES", "DEFAULT_OPTIONS", "OUTPUTS"]
         self.assertEqual([config[k] for k in keys], out)
         self.assertEqual(len(config["OUTPUTS"].split()), 4)
+
+    def test_pins_look_like_hashes(self):
+        config = gpu_smoke.read_config(CONF)
+        self.assertRegex(config["DATASET_SHA256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(config["DATASET_COMMIT"], r"^[0-9a-f]{40}$")
 
     def test_malformed_line(self):
         with tempfile.TemporaryDirectory() as d:
@@ -39,6 +47,52 @@ class TestReadConfig(unittest.TestCase):
                 f.write('GOOD="1"\nthis is not a setting\n')
             with self.assertRaises(ValueError):
                 gpu_smoke.read_config(path)
+
+
+class TestFetchDataset(unittest.TestCase):
+    COMMIT = "0" * 40
+    ZIP = "set.zip"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cache = os.path.join(self.tmp.name, "cache")
+        self.folder = os.path.join(self.tmp.name, "images")
+        os.makedirs(self.folder)
+
+    def make_config(self, names, sha256=None):
+        """Write a zip of fake images into the cache and return a matching config."""
+        path = os.path.join(self.cache, self.COMMIT, self.ZIP)
+        os.makedirs(os.path.dirname(path))
+        with zipfile.ZipFile(path, "w") as z:
+            for name in names:
+                z.writestr(name, b"not an image")
+        with open(path, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        return path, {
+            "DATASET_REPO": "https://example.invalid/never-used",
+            "DATASET_COMMIT": self.COMMIT,
+            "DATASET_ZIP": self.ZIP,
+            "DATASET_IMAGES": "3",
+            "DATASET_SHA256": sha256 or digest,
+        }
+
+    def test_good_zip(self):
+        _, config = self.make_config(["a.JPG", "b.jpg", "c.jpg"])
+        paths = gpu_smoke.fetch_dataset(config, self.cache, self.folder)
+        self.assertEqual(paths, [os.path.join(self.folder, n) for n in ("a.JPG", "b.jpg", "c.jpg")])
+        self.assertTrue(all(os.path.isfile(p) for p in paths))
+
+    def test_wrong_sha256(self):
+        path, config = self.make_config(["a.JPG", "b.jpg", "c.jpg"], sha256="f" * 64)
+        with self.assertRaisesRegex(RuntimeError, "SHA-256"):
+            gpu_smoke.fetch_dataset(config, self.cache, self.folder)
+        self.assertFalse(os.path.exists(path))
+
+    def test_wrong_image_count(self):
+        _, config = self.make_config(["a.JPG", "b.jpg"])
+        with self.assertRaisesRegex(RuntimeError, "expected 3 images"):
+            gpu_smoke.fetch_dataset(config, self.cache, self.folder)
 
 
 QUERY_OUTPUT = "Tesla T4, 610.57.04, 15360 MiB\n"
