@@ -20,8 +20,10 @@
 #   secrets   MODAL_TOKEN_ID, MODAL_TOKEN_SECRET
 #   variable  MODAL_ENVIRONMENT, the Modal environment to run in
 # It pulls the image with this run's GITHUB_TOKEN; no registry token is
-# stored anywhere. Each run costs about USD 0.50 on Modal (a T4, 4 cores and
-# 16 GiB for about 30 minutes at list prices); the job log prints an estimate.
+# stored anywhere. A dry run only reaches Modal from a branch that the
+# environment's deployment branch rules allow. Each run costs about USD 0.20
+# on Modal (a T4, 4 cores and 16 GiB for about 14 minutes at list prices, with
+# aidm-vineyard-small); the job log prints an estimate.
 
 name: Release
 
@@ -245,7 +247,8 @@ jobs:
     needs: build
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    # About 1.5 times the measured 18 minutes, Modal image build included
+    timeout-minutes: 30
     environment: modal-gpu
     permissions:
       contents: read
@@ -261,7 +264,8 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/modal"
           "$RUNNER_TEMP/modal/bin/pip" install --quiet modal==1.6.2
 
-      # The Sandbox lives at most 100 minutes (SMOKE_TIMEOUT) and is not retried.
+      # The Sandbox lives at most 20 minutes (SMOKE_TIMEOUT, about 1.5 times the
+      # measured 804 s) and is not retried.
       # Builder 2025.06 adds nothing to a registry image, so the engine keeps
       # its own Python.
       - name: Run the engine on a GPU
@@ -273,7 +277,7 @@ jobs:
           REGISTRY_USERNAME: ${{ github.actor }}
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
           SMOKE_GPU: T4
-          SMOKE_TIMEOUT: "6000"
+          SMOKE_TIMEOUT: "1200"
           GPU_IMAGE: ${{ needs.build.outputs.gpu-image }}
         run: '"$RUNNER_TEMP/modal/bin/python" scripts/gpu-smoke-modal.py "$GPU_IMAGE"'
 

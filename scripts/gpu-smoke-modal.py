@@ -24,7 +24,7 @@
 #   SMOKE_GPU        Modal GPU type (default: T4, the cheapest)
 #   SMOKE_CPU        CPU cores for the Sandbox (default: 4)
 #   SMOKE_MEMORY     memory for the Sandbox in MiB (default: 16384)
-#   SMOKE_TIMEOUT    Sandbox lifetime in seconds (default: 2400)
+#   SMOKE_TIMEOUT    Sandbox lifetime in seconds (default: 1200)
 #   SMOKE_OPTIONS    engine options (default: DEFAULT_OPTIONS in smoke-test.conf)
 #   SMOKE_CACHE      where the dataset zip is downloaded once
 #                    (default: ~/.cache/aidm-smoke-test)
@@ -211,7 +211,7 @@ def main():
     gpu = os.environ.get("SMOKE_GPU", "T4")
     cpu = float(os.environ.get("SMOKE_CPU", "4"))
     memory = int(os.environ.get("SMOKE_MEMORY", "16384"))
-    timeout = int(os.environ.get("SMOKE_TIMEOUT", "2400"))
+    timeout = int(os.environ.get("SMOKE_TIMEOUT", "1200"))
     options = os.environ.get("SMOKE_OPTIONS") or config["DEFAULT_OPTIONS"]
     cache = os.environ.get("SMOKE_CACHE") or os.path.expanduser("~/.cache/aidm-smoke-test")
     outputs = config["OUTPUTS"].split()
