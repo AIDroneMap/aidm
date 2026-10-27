@@ -14,7 +14,7 @@ COPY . ./
 # Run the build
 # Compile for the AIDM CPU target (x86-64-v3 or armv8.2-a), not for the
 # CPU of the build machine. See docker/README.
-RUN CPU_TARGET_INSTALL=YES GPU_INSTALL=YES bash configure.sh install
+RUN CPU_TARGET_INSTALL=YES bash configure.sh install
 
 # Clean Superbuild
 RUN bash configure.sh clean
@@ -34,8 +34,8 @@ LABEL org.opencontainers.image.source="https://github.com/AIDroneMap/aidm" \
 
 # Env variables
 ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONPATH="$PYTHONPATH:/code/SuperBuild/install/lib/python3.12:/code/SuperBuild/install/bin/opensfm" \
-    LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/code/SuperBuild/install/lib" \
+    PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}/code/SuperBuild/install/lib/python3.12:/code/SuperBuild/install/bin/opensfm" \
+    LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}/code/SuperBuild/install/lib" \
     PDAL_DRIVER_PATH="/code/SuperBuild/install/bin"
 
 WORKDIR /code

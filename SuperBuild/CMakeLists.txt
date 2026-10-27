@@ -138,7 +138,7 @@ set(ODM_GFlags_Version 2.2.2)
 option(ODM_BUILD_GFlags "Force to build GFlags library" OFF)
 SETUP_EXTERNAL_PROJECT(GFlags ${ODM_GFlags_Version} ${ODM_BUILD_GFlags})
 
-set(ODM_Ceres_Version 2.0.0)
+set(ODM_Ceres_Version 2.2.0)
 option(ODM_BUILD_Ceres "Force to build Ceres library" OFF)
 SETUP_EXTERNAL_PROJECT(Ceres ${ODM_Ceres_Version} ${ODM_BUILD_Ceres})
 
@@ -209,7 +209,7 @@ externalproject_add(dem2mesh
 
 externalproject_add(dem2points
     GIT_REPOSITORY    https://github.com/WebODM/dem2points.git
-    GIT_TAG           master
+    GIT_TAG           4527122615f41044bde0e79850464ed33549ceeb
     PREFIX            ${SB_BINARY_DIR}/dem2points
     SOURCE_DIR        ${SB_SOURCE_DIR}/dem2points
     CMAKE_ARGS        -DCMAKE_INSTALL_PREFIX:PATH=${SB_INSTALL_DIR}

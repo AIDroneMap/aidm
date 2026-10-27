@@ -517,7 +517,7 @@ def merge(input_ortho_and_ortho_cuts, output_orthophoto, orthophoto_vars={}, max
                     np.copyto(dstarr, temp, where=write_region)
 
                     # check if dest has any nodata pixels available
-                    if np.count_nonzero(dstarr[-1]) == blocksize:
+                    if np.count_nonzero(dstarr[-1]) == dst_rows * dst_cols:
                         break
 
                 # Second pass, write all feathered rasters

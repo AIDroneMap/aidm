@@ -8,7 +8,7 @@ ExternalProject_Add(${_proj_name}
   STAMP_DIR         ${_SB_BINARY_DIR}/stamp
   #--Download step--------------
   DOWNLOAD_DIR      ${SB_DOWNLOAD_DIR}/${_proj_name}
-  URL               https://github.com/abseil/abseil-cpp/archive/refs/heads/lts_2026_01_07.zip
+  URL               https://github.com/abseil/abseil-cpp/archive/refs/tags/20260107.1.zip
   #--Update/Patch step----------
   UPDATE_COMMAND    ""
   #--Configure step-------------
