@@ -75,6 +75,7 @@ Every bug fix needs a test that fails without it. Every new feature needs tests 
 - **Outputs stay compatible.** Do not rename or move output files and folders, and do not rename or remove command-line options. Tools such as WebODM and QGIS workflows depend on them. Changes here need an approved spec.
 - **Claims need numbers.** A change described as faster, lighter or more accurate must include before and after measurements on the same hardware and dataset, with the method written down.
 - **Dependencies are pinned.** Update one dependency per pull request, in `SuperBuild/` or `requirements.txt`, and say why.
+- **Minimum CPU.** Both images are compiled for x86-64-v3 and armv8.2-a (`docker/gcc`, `docker/g++`, "Hardware we build for" in `README.md`). Do not add compatibility for CPUs below that minimum: no lower `-march`, no fallback code paths, no second image for old CPUs. Do not reopen this decision in pull requests.
 - **Licences.** AIDM is AGPL-3.0. Keep every existing copyright notice. Do not copy code from sources with an incompatible licence, and do not add model weights whose licence forbids commercial use. When unsure, stop and ask.
 
 ## Security and privacy

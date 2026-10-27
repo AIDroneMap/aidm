@@ -85,6 +85,23 @@ Open GeoTIFFs in [QGIS](https://qgis.org), point clouds in [CloudCompare](https:
 
 AIDM targets Linux. The CPU image runs on x86-64 and arm64, and the NVIDIA CUDA image on x86-64. Windows and macOS native builds from ODX are not maintained here. On those systems AIDM runs in a Linux container.
 
+## Hardware we build for
+
+AIDM is built for large datasets on modern machines. A normal job is 500 images and 3 GB of data, and the engine does not keep compatibility with CPUs that cannot run such a job. Both images compile every C++ tool, dependencies included, for this minimum CPU:
+
+| Architecture | Minimum | For example |
+| --- | --- | --- |
+| x86-64 | x86-64-v3, with AVX2, FMA and BMI2 | Intel Haswell (2013) and later, AMD Zen (2017) and later |
+| arm64 | ARMv8.2-A | AWS Graviton 2, Ampere Altra, Apple M1, Raspberry Pi 5 |
+
+Older CPUs are not supported. That includes Intel CPUs before Haswell, the Raspberry Pi 4 and AWS Graviton 1, and also some newer Intel Pentium, Celeron and Atom models that ship without AVX2. On such a CPU the engine stops at start with one line:
+
+```
+AIDM needs a CPU with AVX2 and FMA (2013 or later). This CPU does not have them.
+```
+
+This is a decision, not a bug, and [ADR 0001](docs/adr/0001-build-for-modern-cpus.md) records why. On an x86-64 Linux machine that qualifies, `grep -o -w -e avx2 -e fma /proc/cpuinfo | sort -u` prints both words.
+
 ## Roadmap
 
 Target dates, subject to change.

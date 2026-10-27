@@ -4,6 +4,17 @@ AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX 
 
 ## Unreleased
 
+### Changed
+
+- Both images are built for modern CPUs. Every C++ tool, dependencies included, is compiled for x86-64-v3 (AVX2, FMA, BMI2) on x86-64 and for ARMv8.2-A on arm64, instead of Nehalem (2008, no AVX) and ARMv8.0-A. This reverses "The CPU image is built for a generic CPU" from 0.1.0. See "Hardware we build for" in `README.md` and [ADR 0001](docs/adr/0001-build-for-modern-cpus.md).
+- The minimum CPU is now Intel Haswell (2013) or AMD Zen (2017) on x86-64, and ARMv8.2-A on arm64 (AWS Graviton 2, Ampere Altra, Apple M1, Raspberry Pi 5). Older CPUs, including the Raspberry Pi 4, are not supported.
+- The new target does not make the engine faster. On an AMD Ryzen 9 9900X, against 0.1.0 built from the same commit, a full run takes the same time: 124.6 s against 125.1 s on Brighton Beach (18 images) and 302.3 s against 305.3 s on aidm-vineyard-small (73 images). Most stages change by less than 4%. The openmvs stage is 0.2% slower on aidm-vineyard-small and 6% to 8% slower on Brighton Beach (about 2 s of 29 s).
+- `configure.sh install` replaces gcc and g++ with the wrappers in `docker/` when `CPU_TARGET_INSTALL=YES` is set. The old name, `PORTABLE_INSTALL`, no longer does anything.
+
+### Added
+
+- The engine checks the CPU at start. On a CPU below the minimum it stops with one line, for example `AIDM needs a CPU with AVX2 and FMA (2013 or later). This CPU does not have them.`, instead of crashing later with an illegal instruction.
+
 ### Fixed
 
 - The release workflow accepts the manifest digest as proof that the pushed image is the tested one. Docker 29 on the GitHub runners uses the containerd image store, which reports that digest instead of the config digest, so every GPU image check failed from 26 October 2026.

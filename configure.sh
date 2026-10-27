@@ -198,8 +198,8 @@ installreqs() {
 install() {
     installreqs
 
-    if [ ! -z "$PORTABLE_INSTALL" ]; then
-        echo "Replacing g++ and gcc with our scripts for portability..."
+    if [ ! -z "$CPU_TARGET_INSTALL" ]; then
+        echo "Replacing g++ and gcc with our scripts to compile for the AIDM CPU target..."
         if [ ! -e /usr/bin/gcc_real ]; then
             sudo mv -v /usr/bin/gcc /usr/bin/gcc_real
             sudo cp -v ./docker/gcc /usr/bin/gcc
