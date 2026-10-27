@@ -38,6 +38,12 @@ Follow this order for any change larger than a small fix:
 4. **Implement.** One issue per branch, one logical change per pull request.
 5. **Review.** Open a pull request and wait for a human review.
 
+## Performance claims and benchmarks
+
+- A change that claims a speed or memory gain is validated in this session and measured only by `aidm-bench`, the private benchmark repository.
+- To have a change measured, start a release dry run from the branch (`gh workflow run release.yml --ref <branch> -f publish=false`), take the CPU or GPU image digest it pushed to the `aidm-ci` package, and file a benchmark issue in `aidm-bench` with the `benchmark` issue template, naming that digest and the pull request.
+- Link the benchmark issue from the pull request. Nobody writes a performance number into this repository; numbers come only from `aidm-bench` records.
+
 ## Branches, commits and pull requests
 
 - Branch from `master` with a name like `fix/exif-altitude` or `feat/stage-progress-events`.
