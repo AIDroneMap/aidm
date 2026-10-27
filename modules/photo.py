@@ -1,7 +1,9 @@
+import io
 import logging
 import re
 import os
 import math
+import struct
 
 import exifread
 import numpy as np
@@ -41,6 +43,63 @@ def find_xmp_packet(file, prefix_size=XMP_PREFIX_SIZE):
     if xmp_start < xmp_end:
         return img_bytes[xmp_start:xmp_end + 12]
     return None
+
+# The signature box that opens a JPEG XL container (ISO/IEC 18181-2)
+JXL_SIGNATURE = b'\x00\x00\x00\x0cJXL \r\n\x87\n'
+
+def find_jxl_exif(file):
+    """
+    Return the TIFF block held by the Exif box of a JPEG XL container, or None.
+    None is also returned for files that are not JPEG XL containers, so the
+    caller can fall back to reading the file itself. Exif boxes compressed
+    with Brotli (brob) are not handled.
+    """
+    file.seek(0)
+    if file.read(len(JXL_SIGNATURE)) != JXL_SIGNATURE:
+        return None
+
+    # The container is a sequence of ISO BMFF boxes: a 4 byte big endian size
+    # that counts the header, a 4 byte type, then the payload. A size of 1
+    # means an 8 byte size follows the type. A size of 0 means "to the end".
+    while True:
+        header = file.read(8)
+        if len(header) < 8:
+            return None
+        size, box_type = struct.unpack('>I4s', header)
+        header_size = 8
+        if size == 1:
+            large = file.read(8)
+            if len(large) < 8:
+                return None
+            size, = struct.unpack('>Q', large)
+            header_size = 16
+
+        if box_type == b'Exif':
+            payload = file.read(size - header_size) if size else file.read()
+            if len(payload) < 4:
+                return None
+            # The payload opens with the offset of the TIFF header, counted
+            # from the end of that 4 byte field
+            tiff_offset, = struct.unpack('>I', payload[:4])
+            if 4 + tiff_offset >= len(payload):
+                return None
+            return payload[4 + tiff_offset:]
+
+        if size == 0 or size < header_size:
+            return None
+        file.seek(size - header_size, 1)
+
+def read_exif_tags(file):
+    """
+    Return the exifread tags of an open image file.
+    ODMExifRead does not recognise the JPEG XL container and returns no tags
+    for it, so for those files the TIFF block of the Exif box is parsed
+    instead of the file.
+    """
+    exif = find_jxl_exif(file)
+    if exif is not None:
+        file = io.BytesIO(exif)
+    return exifread.process_file(file, details=True, extract_thumbnail=False)
 
 def find_mean_utc_time(photos):
     utc_times = []
@@ -234,7 +293,7 @@ class ODM_Photo:
         xtags = {}
 
         with open(_path_file, 'rb') as f:
-            tags = exifread.process_file(f, details=True, extract_thumbnail=False)
+            tags = read_exif_tags(f)
             try:
                 if 'Image Make' in tags:
                     try:
