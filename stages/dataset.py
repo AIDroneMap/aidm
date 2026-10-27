@@ -14,7 +14,7 @@ from modules import boundary
 from modules import ai
 from modules.skyremoval.skyfilter import SkyFilter
 from modules.bgfilter import BgFilter
-from modules.concurrency import parallel_map
+from modules.concurrency import parallel_map, max_workers_for_memory
 from modules.video.video2dataset import Video2Dataset, extract_subtitles
 
 def save_images_database(photos, database_file):
@@ -232,7 +232,13 @@ class ODMLoadDatasetStage(types.ODM_Stage):
                                 except Exception as e:
                                     log.WARNING("Cannot generate mask for %s: %s" % (item['file'], str(e)))
 
-                            parallel_map(parallel_sky_filter, sky_images, max_workers=args.max_concurrency)
+                            # Each image needs memory in proportion to its size,
+                            # so run only as many at once as fit in free memory
+                            per_image = max(SkyFilter.memory_per_image(item['p'].width, item['p'].height) for item in sky_images)
+                            sky_workers = max_workers_for_memory(per_image, args.max_concurrency)
+                            log.INFO("Generating sky masks with %s threads (about %s MB per image)" % (sky_workers, int(per_image / 1024 / 1024)))
+
+                            parallel_map(parallel_sky_filter, sky_images, max_workers=sky_workers)
 
                             log.INFO("Sky masks generation completed!")
                         else:

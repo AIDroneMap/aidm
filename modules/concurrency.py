@@ -25,6 +25,16 @@ def get_max_memory_mb(minimum = 100, use_at_most = 0.5):
     """
     return max(minimum, (virtual_memory().available / 1024 / 1024) * use_at_most)
 
+def max_workers_for_memory(bytes_per_worker, max_workers, use_at_most = 0.5):
+    """
+    :param bytes_per_worker peak memory of one worker, in bytes
+    :param max_workers never return more than this
+    :param use_at_most use at most this fraction of the available memory. 0.5 = use at most 50% of available memory
+    :return number of workers that fit in that memory, between 1 and max_workers
+    """
+    budget = virtual_memory().available * use_at_most
+    return int(max(1, min(max_workers, budget // max(1, bytes_per_worker))))
+
 def get_total_memory():
     return virtual_memory().total
 
