@@ -21,3 +21,7 @@ settings.yml
 code_of_conduct.md
 configure_18_04.sh
 index.html
+# configure.sh clean deletes static libraries and object files, but it now
+# runs before the rest of the repository is copied. Keep them out here.
+**/*.a
+**/*.o

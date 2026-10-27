@@ -18,6 +18,7 @@ AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX 
 - Reading image metadata looks for the XMP packet in the first 1 MiB of each file and reads the rest only when the packet is not there. Loading the 18 Brighton Beach images reads 20.5 MB instead of 66.5 MB.
 - With `--video-limit`, only the frames that are kept get their final JPEG encode. A 5-minute 4K clip extracts in 107 s instead of 132 s at the default limit of 500, and in 96 s instead of 131 s at a limit of 100.
 - GPS to UTM conversion and `geo.txt` reprojection build one coordinate transformer per run instead of one per image or line. Stage times do not change measurably.
+- Image builds no longer recompile the C++ dependencies when only Python code, tests or docs change. The release workflow keeps the layers in a registry build cache, `ghcr.io/aidronemap/aidm-buildcache`.
 
 ### Added
 

@@ -1,3 +1,15 @@
+# Layer order. The builder stage first copies only the files the SuperBuild
+# step reads, which are configure.sh, requirements.txt, docker/ and SuperBuild/.
+# It compiles the C++ dependencies, then copies the rest of the repository.
+# A change to Python code, tests or docs leaves the SuperBuild layer cached.
+# A change to one of those four inputs rebuilds from the SuperBuild step on.
+# WORKDIR comes after the SuperBuild step on purpose. The release workflow
+# sets SOURCE_DATE_EPOCH to the commit time, and BuildKit includes it in
+# the cache key of WORKDIR, so a WORKDIR before the build would rebuild
+# the dependencies on every commit.
+# The final stage copies /code and /usr/local as before, so the image gets
+# the same files. Keep Dockerfile in the same order.
+
 FROM nvidia/cuda:12.9.1-devel-ubuntu24.04 AS builder
 
 # Env variables
@@ -5,19 +17,23 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONPATH="/code/SuperBuild/install/lib/python3.12/dist-packages:/code/SuperBuild/install/bin/opensfm" \
     LD_LIBRARY_PATH="/code/SuperBuild/install/lib"
 
-# Prepare directories
-WORKDIR /code
+# Copy only the inputs of the SuperBuild step, so that other changes do not
+# invalidate it. These steps create /code. WORKDIR comes later, see the top.
+COPY configure.sh requirements.txt /code/
+COPY docker/ /code/docker/
+COPY SuperBuild/ /code/SuperBuild/
 
-# Copy everything
-COPY . ./
-
-# Run the build
+# Run the build and clean the SuperBuild in one layer, so that the cached
+# layer holds only the installed files, not the sources and build trees.
 # Compile for the AIDM CPU target (x86-64-v3 or armv8.2-a), not for the
 # CPU of the build machine. See docker/README.
-RUN CPU_TARGET_INSTALL=YES bash configure.sh install
+RUN cd /code \
+  && CPU_TARGET_INSTALL=YES bash configure.sh install \
+  && bash configure.sh clean
 
-# Clean Superbuild
-RUN bash configure.sh clean
+# Copy everything else
+WORKDIR /code
+COPY . ./
 
 ### END Builder
 
