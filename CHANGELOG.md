@@ -25,6 +25,7 @@ AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX 
 
 ### Fixed
 
+- JPEG XL images get their EXIF metadata read again: make, model, GPS position, orientation and capture time. ODMExifRead, the EXIF library the engine uses since ODX dropped upstream ExifRead, does not know the JPEG XL container and returned no tags, so JPEG XL datasets lost their GPS positions (#12). The engine now finds the Exif box of the container itself and hands its TIFF block to the library.
 - The arm64 image now has OpenCV's NEON_DOTPROD and NEON_FP16 kernels, which OpenCV runs on CPUs that support them. The compiler wrappers dropped the `-march=armv8.2-a+dotprod` and `-march=armv8.2-a+fp16` flags OpenCV builds them with, so the arm64 build had no dispatched kernels at all (#10). The smoke test on the GitHub arm64 runner shows no measurable change: opensfm took 51.8 s and 51.5 s before the fix and 51.5 s after.
 - The release workflow accepts the manifest digest as proof that the pushed image is the tested one. Docker 29 on the GitHub runners uses the containerd image store, which reports that digest instead of the config digest, so every GPU image check failed from 26 October 2026.
 - The cut and feathered orthophotos of split-merge submodels (`odm_orthophoto_cut.tif`, `odm_orthophoto_feathered.tif`) are computed in windows of about 4 megapixels instead of whole bands. On a 181 megapixel orthophoto the engine process peaks at 1.5 GiB instead of 4.1 GiB in the orthophoto stage, and the files are byte-identical.
