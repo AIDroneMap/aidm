@@ -1,3 +1,4 @@
+from bisect import bisect_left
 from datetime import datetime
 from modules import location, log
 import re
@@ -29,6 +30,26 @@ class SrtFileParser:
         self.gps_data = []
         self.ll_to_utm = None
         self.utm_to_ll = None
+        self._entry_index_len = None
+        self._gps_built_len = None
+        self._gps_times_len = None
+
+    def _entry_index(self):
+        """Lists of start and end times, built once and rebuilt if self.data changes size.
+        The index is only usable for bisection if both lists never go backwards."""
+        if self._entry_index_len != len(self.data):
+            starts = [e["start"] for e in self.data]
+            ends = [e["end"] for e in self.data]
+            try:
+                usable = all(a <= b for a, b in zip(starts, starts[1:])) and \
+                         all(a <= b for a, b in zip(ends, ends[1:]))
+            except TypeError:
+                usable = False
+            self._entry_starts = starts
+            self._entry_ends = ends
+            self._entry_index_usable = usable
+            self._entry_index_len = len(self.data)
+        return self._entry_starts, self._entry_ends, self._entry_index_usable
 
     def get_entry(self, timestamp: datetime):
         if not self.data:
@@ -38,77 +59,111 @@ class SrtFileParser:
         if timestamp < self.data[0]["start"] or timestamp > self.data[len(self.data) - 1]["end"]:
             return None
 
+        starts, ends, usable = self._entry_index()
+        if usable:
+            # First entry that ends at or after the timestamp. If it also
+            # starts by then it is the first match in file order.
+            i = bisect_left(ends, timestamp)
+            if i < len(ends) and starts[i] <= timestamp:
+                return self.data[i]
+            return None
+
         for entry in self.data:
             if entry["start"] <= timestamp and entry["end"] >= timestamp:
                 return entry
 
         return None
 
+    def _build_gps_data(self):
+        i = 0
+        for d in self.data:
+            lat, lon, alt = d.get('latitude'), d.get('longitude'), d.get('altitude')
+            if alt is None:
+                alt = 0
+            tm = d.get('start')
+
+            if lat is not None and lon is not None:
+                if self.ll_to_utm is None:
+                    self.ll_to_utm, self.utm_to_ll = location.utm_transformers_from_ll(lon, lat)
+
+                coords = self.ll_to_utm.TransformPoint(lon, lat, alt)
+
+                # First or new (in X/Y only) or last
+                add = (not len(self.gps_data)) or (coords[0], coords[1]) != (self.gps_data[-1][1][0], self.gps_data[-1][1][1]) or i == len(self.data) - 1
+                if add:
+                    self.gps_data.append((tm, coords))
+            i += 1
+
+    def _gps_times(self):
+        """List of GPS times, rebuilt if self.gps_data changes size.
+        Returns None if the times are not in order, so bisection cannot be used."""
+        if self._gps_times_len != len(self.gps_data):
+            times = [g[0] for g in self.gps_data]
+            try:
+                usable = all(a <= b for a, b in zip(times, times[1:]))
+            except TypeError:
+                usable = False
+            self._gps_times_list = times if usable else None
+            self._gps_times_len = len(self.gps_data)
+        return self._gps_times_list
+
+    def _gps_find(self, timestamp):
+        """Index of the first GPS point with a time at or after the timestamp, or None"""
+        times = self._gps_times()
+        if times is not None:
+            i = bisect_left(times, timestamp)
+            return i if i < len(times) else None
+
+        for i in range(len(self.gps_data)):
+            if self.gps_data[i][0] >= timestamp:
+                return i
+        return None
+
     def get_gps(self, timestamp):
         if not self.data:
             self.parse()
-        
-        # Initialize on first call
-        prev_coords = None
 
-        if not self.gps_data:
-            i = 0
-            for d in self.data:
-                lat, lon, alt = d.get('latitude'), d.get('longitude'), d.get('altitude')
-                if alt is None:
-                    alt = 0
-                tm = d.get('start')
+        # Build once. An SRT without GPS stays empty, so remember that we tried.
+        if not self.gps_data and self._gps_built_len != len(self.data):
+            self._build_gps_data()
+            self._gps_built_len = len(self.data)
 
-                if lat is not None and lon is not None:
-                    if self.ll_to_utm is None:
-                        self.ll_to_utm, self.utm_to_ll = location.utm_transformers_from_ll(lon, lat)
-
-                    coords = self.ll_to_utm.TransformPoint(lon, lat, alt)
-
-                    # First or new (in X/Y only) or last
-                    add = (not len(self.gps_data)) or (coords[0], coords[1]) != (self.gps_data[-1][1][0], self.gps_data[-1][1][1]) or i == len(self.data) - 1
-                    if add:
-                        self.gps_data.append((tm, coords))
-                i += 1
-        
         # No data available
         if not len(self.gps_data) or self.gps_data[0][0] > timestamp:
             return None
 
         # Interpolate
-        start = None
-        for i in range(len(self.gps_data)):
-            tm, coords = self.gps_data[i]
+        end = self._gps_find(timestamp)
+        if end is None:
+            return None
 
-            # Perfect match
-            if timestamp == tm:
-                return self.utm_to_ll.TransformPoint(*coords)
+        # Perfect match
+        if self.gps_data[end][0] == timestamp:
+            return self.utm_to_ll.TransformPoint(*self.gps_data[end][1])
 
-            elif tm > timestamp:
-                end = i
-                start = i - 1
-                if start < 0:
-                    return None
+        start = end - 1
+        if start < 0:
+            return None
 
-                gd_s = self.gps_data[start]
-                gd_e = self.gps_data[end]
-                sx, sy, sz = gd_s[1]
-                ex, ey, ez = gd_e[1]
-                
-                dt = (gd_e[0] - gd_s[0]).total_seconds()
-                if dt == 0:
-                    return None
+        gd_s = self.gps_data[start]
+        gd_e = self.gps_data[end]
+        sx, sy, sz = gd_s[1]
+        ex, ey, ez = gd_e[1]
 
-                dx = (ex - sx) / dt
-                dy = (ey - sy) / dt
-                dz = (ez - sz) / dt
-                t = (timestamp - gd_s[0]).total_seconds()
+        dt = (gd_e[0] - gd_s[0]).total_seconds()
+        if dt == 0:
+            return None
 
-                return self.utm_to_ll.TransformPoint(
-                    sx + dx * t,
-                    sy + dy * t,
-                    sz + dz * t
-                )
+        dx = (ex - sx) / dt
+        dy = (ey - sy) / dt
+        dz = (ez - sz) / dt
+        t = (timestamp - gd_s[0]).total_seconds()
+
+        return self.utm_to_ll.TransformPoint(
+            sx + dx * t,
+            sy + dy * t,
+            sz + dz * t
+        )
 
     def parse(self):
 

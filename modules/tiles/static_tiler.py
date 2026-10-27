@@ -82,12 +82,13 @@ class GlobalMercator:
 
 class StaticTiler:
     def __init__(self, input_path: str, output_folder: str,
-                 tile_size: int = 256, tms: bool = False):
+                 tile_size: int = 256, tms: bool = False, global_range=None):
         self.input_path = input_path
         self.output_folder = output_folder
         self.tile_size = tile_size
         self.tms = tms
         self.mercator = GlobalMercator(tile_size)
+        self._global_range = global_range
 
         if not os.path.isfile(input_path):
             raise FileNotFoundError(f"{input_path} does not exist")
@@ -223,6 +224,22 @@ class StaticTiler:
 
         return r_x, r_y, r_xsize, r_ysize, w_x, w_y, w_xsize, w_ysize
 
+    def global_range(self):
+        """Return (min, max) of the data bands, computed once and cached."""
+        if self._global_range is None:
+            band_indices = range(1, min(3, self.n_bands) + 1)
+            global_min = float("inf")
+            global_max = float("-inf")
+            for b in band_indices:
+                stats = self._src.statistics(b)
+                global_min = min(global_min, stats.min)
+                global_max = max(global_max, stats.max)
+
+            if global_min == global_max:
+                global_max += 0.1
+            self._global_range = (global_min, global_max)
+        return self._global_range
+
     def get_min_max_z(self):
         return self.t_min_z, self.t_max_z
 
@@ -276,22 +293,11 @@ class StaticTiler:
 
         # Rescale non-byte data to 0-255
         if dtype != "uint8":
-            # Compute global min/max across all data bands using dataset statistics
-            if not hasattr(self, "_global_min"):
-                self._global_min = float("inf")
-                self._global_max = float("-inf")
-                for b in band_indices:
-                    stats = self._src.statistics(b)
-                    self._global_min = min(self._global_min, stats.min)
-                    self._global_max = max(self._global_max, stats.max)
-
-                if self._global_min == self._global_max:
-                    self._global_max += 0.1
-
-            delta = self._global_max - self._global_min
+            global_min, global_max = self.global_range()
+            delta = global_max - global_min
             data = data.astype(np.float64)
-            data = np.clip(data, self._global_min, self._global_max)
-            data = ((data - self._global_min) / delta * 255.0).astype(np.uint8)
+            data = np.clip(data, global_min, global_max)
+            data = ((data - global_min) / delta * 255.0).astype(np.uint8)
         else:
             data = data.astype(np.uint8)
 

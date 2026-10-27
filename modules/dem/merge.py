@@ -8,8 +8,10 @@ from modules.dem.commands import compute_euclidean_map
 from modules import log
 from modules import io
 import os
+import threading
+from modules.concurrency import parallel_map
 
-def euclidean_merge_dems(input_dems, output_dem, creation_options={}, euclidean_map_source=None):
+def euclidean_merge_dems(input_dems, output_dem, creation_options={}, euclidean_map_source=None, max_workers=1):
     """
     Based on https://github.com/mapbox/rio-merge-rgba
     and ideas from Anna Petrasova
@@ -18,6 +20,11 @@ def euclidean_merge_dems(input_dems, output_dem, creation_options={}, euclidean_
     Computes a merged DEM by computing/using a euclidean 
     distance to NODATA cells map for all DEMs and then blending all overlapping DEM cells 
     by a weighted average based on such euclidean distance.
+
+    Output blocks are independent, so they are computed in parallel
+    with max_workers threads. Blocks are still written in block order,
+    so the output file is byte-identical to a serial run. With
+    max_workers=1 (the default) everything runs in the calling thread.
     """
     inputs = []
     bounds=None
@@ -39,6 +46,7 @@ def euclidean_merge_dems(input_dems, output_dem, creation_options={}, euclidean_
         res = first.res
         dtype = first.dtypes[0]
         profile = first.profile
+        dst_count = first.count
 
     for dem in existing_dems:
         eumap = compute_euclidean_map(dem, io.related_file_path(dem, postfix=".euclideand", replace_base=euclidean_map_source), overwrite=False)
@@ -64,6 +72,11 @@ def euclidean_merge_dems(input_dems, output_dem, creation_options={}, euclidean_
             if src_d.profile["count"] != 1 or src_e.profile["count"] != 1:
                 raise ValueError("Inputs must be 1-band rasters")
         dst_w, dst_s, dst_e, dst_n = min(xs), min(ys), max(xs), max(ys)
+
+    # The scan handles are not used again. Workers open their own.
+    for src_d, src_e in sources:
+        src_d.close()
+        src_e.close()
     log.INFO("Output bounds: %r %r %r %r" % (dst_w, dst_s, dst_e, dst_n))
 
     output_transform = Affine.translation(dst_w, dst_n)
@@ -94,22 +107,34 @@ def euclidean_merge_dems(input_dems, output_dem, creation_options={}, euclidean_
     # create destination file
     with rasterio.open(output_dem, "w", **profile) as dstrast:
 
-        for idx, dst_window in dstrast.block_windows():
+        # GDAL handles are not thread-safe, so each worker thread opens
+        # its own set of input handles on first use.
+        tls = threading.local()
+        opened_sources = []
+        opened_lock = threading.Lock()
 
-            left, bottom, right, top = dstrast.window_bounds(dst_window)
+        def get_sources():
+            srcs = getattr(tls, "sources", None)
+            if srcs is None:
+                srcs = [(rasterio.open(d), rasterio.open(e)) for d, e in inputs]
+                tls.sources = srcs
+                with opened_lock:
+                    opened_sources.append(srcs)
+            return srcs
 
-            blocksize = dst_window.width
+        def compute_block(dst_window, bounds):
+            """Return the merged array for one output block (no write)."""
+            left, bottom, right, top = bounds
             dst_rows, dst_cols = (dst_window.height, dst_window.width)
 
             # initialize array destined for the block
-            dst_count = first.count
             dst_shape = (dst_count, dst_rows, dst_cols)
 
             dstarr = np.zeros(dst_shape, dtype=dtype)
             distsum = np.zeros(dst_shape, dtype=dtype)
             small_distance = 0.001953125
 
-            for src_d, src_e in sources:
+            for src_d, src_e in get_sources():
                 # The full_cover behavior is problematic here as it includes
                 # extra pixels along the bottom right when the sources are
                 # slightly misaligned
@@ -170,6 +195,73 @@ def euclidean_merge_dems(input_dems, output_dem, creation_options={}, euclidean_
 
             dstarr[dstarr == 0.0] = src_nodata
 
-            dstrast.write(dstarr, window=dst_window)
+            return dstarr
+
+        # A tiled, compressed GeoTIFF stores blocks in the order they are
+        # written. To get the same bytes as a serial run, blocks are written
+        # in block order: a worker waits for its turn after computing.
+        # parallel_map hands items out in order, so every lower index is
+        # already held by a running worker and the wait cannot deadlock.
+        block_windows = [(window, dstrast.window_bounds(window))
+                         for _, window in dstrast.block_windows()]
+        total_blocks = len(block_windows)
+
+        turn = threading.Condition()
+        state = {"next": 0, "error": None, "last_pct": -1}
+
+        def process_block(item):
+            # parallel_map hangs if this raises, so it never does. The
+            # first error is stored and raised after all workers are done.
+            index, (dst_window, bounds) = item
+            dstarr = None
+
+            with turn:
+                failed = state["error"] is not None
+
+            if not failed:
+                try:
+                    dstarr = compute_block(dst_window, bounds)
+                except Exception as e:
+                    with turn:
+                        if state["error"] is None:
+                            state["error"] = e
+
+            with turn:
+                while state["next"] != index:
+                    turn.wait()
+                failed = state["error"] is not None
+
+            # Only the worker whose turn it is gets here, so the write
+            # needs no lock.
+            error = None
+            if dstarr is not None and not failed:
+                try:
+                    dstrast.write(dstarr, window=dst_window)
+                except Exception as e:
+                    error = e
+
+            with turn:
+                if error is not None and state["error"] is None:
+                    state["error"] = error
+                state["next"] = index + 1
+                pct = ((index + 1) * 100) // total_blocks
+                if pct // 10 > state["last_pct"] // 10:
+                    log.INFO("DEM merge [%d%%]" % pct)
+                state["last_pct"] = pct
+                turn.notify_all()
+
+            dstarr = None
+
+        try:
+            parallel_map(process_block, list(enumerate(block_windows)),
+                         max_workers=max_workers, single_thread_fallback=False)
+        finally:
+            for srcs in opened_sources:
+                for src_d, src_e in srcs:
+                    src_d.close()
+                    src_e.close()
+
+        if state["error"] is not None:
+            raise state["error"]
 
     return output_dem

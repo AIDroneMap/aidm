@@ -2,7 +2,9 @@ import os
 import sys
 import math
 import shutil
+import threading
 from modules import log
+from modules.concurrency import parallel_map
 from modules import system
 from modules import io
 from .static_tiler import StaticTiler
@@ -20,11 +22,50 @@ def generate_tiles(geotiff, output_dir, max_concurrency, resolution):
         shutil.rmtree(output_dir)
     
     log.INFO("Generating static tiles for %s" % geotiff)
-    with StaticTiler(geotiff, output_dir, px_per_tile, tms=True) as tiler:
+    parent = StaticTiler(geotiff, output_dir, px_per_tile, tms=True)
+    workers = []
+    try:
+        tiles = []
         for z in range(z_min, z_max + 1):
-            tiles = tiler.get_tiles_for_zoom(z)
-            for tx, ty, tz in tiles:
+            tiles.extend(parent.get_tiles_for_zoom(z))
+
+        # Statistics are computed once, here, and shared with the workers
+        global_range = None
+        if parent._ds.dtypes[0] != "uint8":
+            global_range = parent.global_range()
+
+        log.INFO("Generating %s tiles with %s workers" % (len(tiles), max(1, max_concurrency)))
+
+        # GDAL datasets are not thread-safe: each thread opens its own
+        local = threading.local()
+        lock = threading.Lock()
+        errors = []
+
+        def process_tile(t):
+            # Must not raise: parallel_map would hang with tiles left in the queue
+            if errors:
+                return
+            tx, ty, tz = t
+            try:
+                tiler = getattr(local, "tiler", None)
+                if tiler is None:
+                    tiler = StaticTiler(geotiff, output_dir, px_per_tile, tms=True, global_range=global_range)
+                    local.tiler = tiler
+                    with lock:
+                        workers.append(tiler)
                 tiler.tile(tz, tx, ty)
+            except Exception as e:
+                with lock:
+                    errors.append(e)
+
+        parallel_map(process_tile, tiles, max_workers=max_concurrency)
+
+        if errors:
+            raise errors[0]
+    finally:
+        for tiler in workers:
+            tiler.close()
+        parent.close()
 
 def generate_orthophoto_tiles(geotiff, output_dir, max_concurrency, resolution):
     try:

@@ -17,6 +17,7 @@ def extract_utm_coords(photos, images_path, output_coords_file):
     
     utm_zone = None
     hemisphere = None
+    proj = None
     coords = []
     reference_photo = None
     for photo in photos:
@@ -26,10 +27,12 @@ def extract_utm_coords(photos, images_path, output_coords_file):
         
         if utm_zone is None:
             utm_zone, hemisphere = get_utm_zone_and_hemisphere_from(photo.longitude, photo.latitude)
+            proj = utm_proj(utm_zone, hemisphere)
 
         try:
             alt = photo.altitude if photo.altitude is not None else 0
-            coord = convert_to_utm(photo.longitude, photo.latitude, alt, utm_zone, hemisphere)
+            x, y = proj(photo.longitude, photo.latitude)
+            coord = [x, y, alt]
         except:
             raise Exception("Failed to convert GPS position to UTM for %s" % photo.filename)
         
@@ -95,6 +98,17 @@ def get_utm_zone_and_hemisphere_from(lon, lat):
     hemisphere = 'S' if lat < 0 else 'N'
     return [utm_zone, hemisphere]
 
+def utm_proj(utm_zone, hemisphere):
+    """
+    Build the Proj object for a UTM zone
+    :param utm_zone UTM zone number
+    :param hemisphere one of 'N' or 'S'
+    :return Proj object
+    """
+    if hemisphere == 'N':
+        return Proj(proj='utm',zone=utm_zone,ellps='WGS84', preserve_units=True)
+    return Proj(proj='utm',zone=utm_zone,ellps='WGS84', preserve_units=True, south=True)
+
 def convert_to_utm(lon, lat, alt, utm_zone, hemisphere):
     """
     Convert longitude, latitude and elevation values to UTM
@@ -105,11 +119,7 @@ def convert_to_utm(lon, lat, alt, utm_zone, hemisphere):
     :param hemisphere one of 'N' or 'S'
     :return [x,y,z] UTM coordinates
     """
-    if hemisphere == 'N':
-        p = Proj(proj='utm',zone=utm_zone,ellps='WGS84', preserve_units=True)
-    else:
-        p = Proj(proj='utm',zone=utm_zone,ellps='WGS84', preserve_units=True, south=True)
-    
+    p = utm_proj(utm_zone, hemisphere)
     x,y = p(lon, lat)
     return [x, y, alt]
 
