@@ -20,8 +20,10 @@
 #   secrets   MODAL_TOKEN_ID, MODAL_TOKEN_SECRET
 #   variable  MODAL_ENVIRONMENT, the Modal environment to run in
 # It pulls the image with this run's GITHUB_TOKEN; no registry token is
-# stored anywhere. Each run costs about USD 0.50 on Modal (a T4, 4 cores and
-# 16 GiB for about 30 minutes at list prices); the job log prints an estimate.
+# stored anywhere. A dry run only reaches Modal from a branch that the
+# environment's deployment branch rules allow. Each run costs about USD 0.21
+# on Modal (a T4, 4 cores and 16 GiB for about 14 minutes at list prices, with
+# aidm-vineyard-small); the job log prints an estimate.
 
 name: Release
 
@@ -102,7 +104,9 @@ jobs:
     needs: check
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 360
+    # About 1.5 times the measured job time with a full build of the C++
+    # dependencies, so a run that misses the build cache still finishes
+    timeout-minutes: ${{ matrix.timeout }}
     permissions:
       contents: read
       packages: write
@@ -116,15 +120,21 @@ jobs:
             runner: ubuntu-24.04
             dockerfile: Dockerfile
             platform: linux/amd64
+            timeout: 100
+            smoke-timeout: 36
           - name: cpu-arm64
             runner: ubuntu-24.04-arm
             dockerfile: Dockerfile
             platform: linux/arm64
+            timeout: 70
+            smoke-timeout: 25
           # The runner has no GPU, so the smoke test runs this image on the CPU
           - name: gpu-amd64
             runner: ubuntu-24.04
             dockerfile: gpu.Dockerfile
             platform: linux/amd64
+            timeout: 135
+            smoke-timeout: 54
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -185,7 +195,9 @@ jobs:
           cache-from: type=registry,ref=${{ env.CACHE_IMAGE }}:${{ matrix.name }}
           cache-to: type=registry,ref=${{ env.CACHE_IMAGE }}:${{ matrix.name }},mode=max,image-manifest=true,oci-mediatypes=true
 
+      # About 1.5 times the slowest measured smoke test on this runner
       - name: Smoke test
+        timeout-minutes: ${{ matrix.smoke-timeout }}
         run: scripts/smoke-test.sh engine "aidm-smoke:$NAME"
         env:
           NAME: ${{ matrix.name }}
@@ -241,7 +253,8 @@ jobs:
     needs: build
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # About 1.5 times the measured 16 to 18 minutes, Modal image build included
+    timeout-minutes: 30
     environment: modal-gpu
     permissions:
       contents: read
@@ -257,7 +270,8 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/modal"
           "$RUNNER_TEMP/modal/bin/pip" install --quiet modal==1.6.2
 
-      # The Sandbox lives at most 40 minutes (SMOKE_TIMEOUT) and is not retried.
+      # The Sandbox lives at most 20 minutes (SMOKE_TIMEOUT, about 1.5 times the
+      # measured 804 s) and is not retried.
       # Builder 2025.06 adds nothing to a registry image, so the engine keeps
       # its own Python.
       - name: Run the engine on a GPU
@@ -269,7 +283,7 @@ jobs:
           REGISTRY_USERNAME: ${{ github.actor }}
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
           SMOKE_GPU: T4
-          SMOKE_TIMEOUT: "2400"
+          SMOKE_TIMEOUT: "1200"
           GPU_IMAGE: ${{ needs.build.outputs.gpu-image }}
         run: '"$RUNNER_TEMP/modal/bin/python" scripts/gpu-smoke-modal.py "$GPU_IMAGE"'
 

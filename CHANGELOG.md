@@ -19,6 +19,7 @@ AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX 
 - With `--video-limit`, only the frames that are kept get their final JPEG encode. A 5-minute 4K clip extracts in 107 s instead of 132 s at the default limit of 500, and in 96 s instead of 131 s at a limit of 100.
 - GPS to UTM conversion and `geo.txt` reprojection build one coordinate transformer per run instead of one per image or line. Stage times do not change measurably.
 - Image builds no longer recompile the C++ dependencies when only Python code, tests or docs change. The release workflow keeps the layers in a registry build cache, `ghcr.io/aidronemap/aidm-buildcache`.
+- The smoke tests and the Modal GPU test process [aidm-vineyard-small](https://huggingface.co/datasets/AIDroneMap/aidm-vineyard-small) v1 instead of Brighton Beach: 73 images of 20 megapixels instead of 18, pinned by commit and checked by SHA-256 on every run. They also check that the orthophoto is georeferenced where the images were taken. With a full build of the C++ dependencies, a release dry run takes 75 to 105 minutes instead of 65. The GPU test costs about USD 0.21 instead of 0.07.
 
 ### Added
 
