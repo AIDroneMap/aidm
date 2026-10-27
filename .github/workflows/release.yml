@@ -3,6 +3,11 @@
 # A v* tag push publishes ghcr.io/aidronemap/aidm:<version>, :latest,
 # :<version>-gpu and :gpu, then opens a draft GitHub release.
 #
+# Every push to master also runs this workflow, without publishing. A dry
+# run and a master push put the two amd64 images, cpu-amd64 and gpu-amd64,
+# in the CI package ghcr.io/aidronemap/aidm-ci, untagged and by digest. The
+# weekly benchmark in aidm-bench then always has a master digest to measure.
+#
 # Run it by hand to test the build without publishing anything:
 #   gh workflow run release.yml -f publish=false
 # Publish again from an existing tag, for example after a failed run:
@@ -31,6 +36,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - master
   workflow_dispatch:
     inputs:
       publish:
@@ -41,14 +48,17 @@ on:
 permissions:
   contents: read
 
-# One publishing run per tag, never cancelled. A new dry run cancels an older one.
+# One publishing run per tag, never cancelled. A new dry run or master push
+# cancels an older one of the same ref. Only a tag push or an explicit
+# publish=true joins the publish group.
 concurrency:
-  group: ${{ github.workflow }}-${{ (github.event_name == 'push' || inputs.publish) && 'publish' || 'dry-run' }}-${{ github.ref }}
-  cancel-in-progress: ${{ !(github.event_name == 'push' || inputs.publish) }}
+  group: ${{ github.workflow }}-${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.publish) && 'publish' || 'dry-run' }}-${{ github.ref }}
+  cancel-in-progress: ${{ !((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.publish) }}
 
 env:
   IMAGE: ghcr.io/aidronemap/aidm
-  # Untagged GPU images from dry runs, so that gpu-test can pull them
+  # Untagged amd64 images from dry runs and master pushes: the GPU image
+  # for gpu-test, the CPU image for the benchmark in aidm-bench
   CI_IMAGE: ghcr.io/aidronemap/aidm-ci
   # Build cache, one tag per matrix entry. Holds layers only, never an
   # image that gets published. See "Build cache" in the README.
@@ -81,7 +91,7 @@ jobs:
           fi
 
           publish=false
-          if [ "$GITHUB_EVENT_NAME" = "push" ] || [ "$PUBLISH_INPUT" = "true" ]; then
+          if [ "$GITHUB_REF_TYPE" = "tag" ] || [ "$PUBLISH_INPUT" = "true" ]; then
             publish=true
           fi
 
@@ -207,7 +217,7 @@ jobs:
       # Dry runs push to CI_IMAGE, by digest only, so nothing is published.
       - name: Push by digest
         id: push
-        if: needs.check.outputs.publish == 'true' || matrix.name == 'gpu-amd64'
+        if: needs.check.outputs.publish == 'true' || matrix.name == 'gpu-amd64' || matrix.name == 'cpu-amd64'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -218,7 +228,7 @@ jobs:
 
       - name: Check that the pushed image is the tested one
         id: check-push
-        if: needs.check.outputs.publish == 'true' || matrix.name == 'gpu-amd64'
+        if: needs.check.outputs.publish == 'true' || matrix.name == 'gpu-amd64' || matrix.name == 'cpu-amd64'
         env:
           TESTED: ${{ steps.build.outputs.imageid }}
           PUSHED: ${{ steps.push.outputs.imageid }}
