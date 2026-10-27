@@ -184,12 +184,13 @@ def screened_poisson_reconstruction(inPointCloud, outMesh, depth = 8, samples = 
 
             # PoissonRecon will sometimes fail due to race conditions
             # on certain machines, especially on Windows
+            failed_threads = threads
             threads //= 2
 
             if threads < 1:
                 break
             else:
-                log.WARNING("PoissonRecon failed with %s threads, let's retry with %s..." % (threads * 2, threads))
+                log.WARNING("PoissonRecon failed with %s threads, let's retry with %s..." % (failed_threads, threads))
 
 
     # Cleanup and reduce vertex count if necessary
