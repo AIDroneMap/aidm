@@ -52,7 +52,8 @@ env:
 jobs:
   check:
     name: Check version
-    runs-on: ubuntu-latest
+    # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -96,6 +97,7 @@ jobs:
   build:
     name: ${{ matrix.name }}
     needs: check
+    # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     permissions:
@@ -108,7 +110,7 @@ jobs:
       matrix:
         include:
           - name: cpu-amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             dockerfile: Dockerfile
             platform: linux/amd64
           - name: cpu-arm64
@@ -117,7 +119,7 @@ jobs:
             platform: linux/arm64
           # The runner has no GPU, so the smoke test runs this image on the CPU
           - name: gpu-amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             dockerfile: gpu.Dockerfile
             platform: linux/amd64
     steps:
@@ -230,7 +232,8 @@ jobs:
   gpu-test:
     name: GPU test on Modal
     needs: build
-    runs-on: ubuntu-latest
+    # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: modal-gpu
     permissions:
@@ -267,7 +270,8 @@ jobs:
     name: Tag images
     needs: [check, build, gpu-test]
     if: needs.check.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       packages: write
@@ -315,7 +319,8 @@ jobs:
     name: Draft release
     needs: [check, manifest]
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
