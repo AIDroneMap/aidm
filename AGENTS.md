@@ -76,13 +76,13 @@ These apply to everything you write: code comments, docs, specs, commit messages
 - Build the GPU image: `docker build -f gpu.Dockerfile -t aidm:gpu .`
 - Development container: `DATA=/path/to/datasets ./start-dev-env.sh`
 
-Edit, run the unit tests and open pull requests from your own worktree. Do not build images or run the full test on the machine you work on: CI runs the tests on every push and the full test for the classes of change that need it. Never log into, sync files to, or run anything on any other machine; the only shared machines you reach are GitHub's runners, through a push. Read the check; do not paste test counts into the pull request, link the check.
+Edit, run the unit tests and open pull requests from your own worktree. Do not build images or run the full test on the machine you work on. Never log into, sync files to, or run anything on any other machine; the only shared machines you reach are GitHub's runners, through a push. Read the check; do not paste test counts into the pull request, link the check.
 
 ## Tests
 
-Unit tests: `./test.sh`, or `./test.sh <name>` for `tests/test_<name>.py`.
-Full test: `scripts/smoke-test.sh`, on the dataset pinned in `scripts/smoke-test.conf`.
-The full test is required when a change touches: `stages/`, `run.py`, `modules/` where a stage reads it, `Dockerfile`, `gpu.Dockerfile`, `SuperBuild/`, `requirements.txt`, `configure.sh`, `docker/`, `.github/`. CI decides from the paths changed; the reviewer follows `REVIEW.md`.
+Unit tests: `./test.sh`, or `./test.sh <name>` for `tests/test_<name>.py`. CI runs them on every push to a branch and on every pull request (`.github/workflows/tests.yml`), inside the last published CPU image with the branch copied over it. That image carries the dependencies of the last release, so a change to `requirements.txt`, `SuperBuild/` or `configure.sh` is reported there and proved by the full test, not by the unit tests.
+Full test: `scripts/smoke-test.sh`, on the dataset pinned in `scripts/smoke-test.conf`. Today it runs only in the release workflow: a maintainer starts a dry run with `gh workflow run release.yml --ref <branch>`, which builds the three images, runs the smoke test on each and the GPU test on Modal. It is not started by pull request events yet.
+The full test is required when a change touches: `stages/`, `run.py`, `modules/` where a stage reads it, `Dockerfile`, `gpu.Dockerfile`, `SuperBuild/`, `requirements.txt`, `configure.sh`, `docker/`, `.github/`. For such a change, ask the maintainer for a dry run and link it in the pull request; the reviewer follows `REVIEW.md`.
 
 Every bug fix needs a test that fails without it. Every new feature needs tests that cover it. Two full engine runs are not identical end to end (reconstruction varies), so a test that compares outputs byte for byte starts from a stored reconstruction and compares the stages after it; sky masks are compared with a pixel tolerance.
 
