@@ -180,17 +180,15 @@ def screened_poisson_reconstruction(inPointCloud, outMesh, depth = 8, samples = 
             
         if os.path.isfile(outMeshDirty):
             break # Done!
+        elif threads <= 1:
+            break
         else:
-
-            # PoissonRecon will sometimes fail due to race conditions
-            # on certain machines, especially on Windows
-            failed_threads = threads
-            threads //= 2
-
-            if threads < 1:
-                break
-            else:
-                log.WARNING("PoissonRecon failed with %s threads, let's retry with %s..." % (failed_threads, threads))
+            # PoissonRecon has data races that can abort a parallel run (#24).
+            # Its parallel loops use every CPU whatever OMP_NUM_THREADS says,
+            # so a retry with fewer threads repeats the failed run. Only the
+            # serial mode runs differently, so retry once with that.
+            log.WARNING("PoissonRecon failed with %s threads, let's retry with 1..." % threads)
+            threads = 1
 
 
     # Cleanup and reduce vertex count if necessary
