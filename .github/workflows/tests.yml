@@ -1,0 +1,62 @@
+# Unit tests on every push and pull request.
+#
+# Runs ./test.sh inside the last published CPU image with the branch copied
+# over it, so no image is built. The published image carries the dependencies
+# of the release it came from; a change to requirements.txt or SuperBuild/
+# is proved by the release workflow, not here. Files deleted on the branch
+# still exist in the image, so a test that asserts a file is gone must not
+# rely on this job.
+#
+# This is the first half of the CI matrix. The smoke test by change class
+# and the nightly come in their own pull requests.
+
+name: Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches-ignore:
+      - master
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Last published CPU image. Move it in its own pull request when a release ships.
+  IMAGE: ghcr.io/aidronemap/aidm:0.1.0
+
+jobs:
+  unit:
+    name: Unit tests
+    # Runner images are pinned on purpose. Moving to a new image is its own PR.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Say when the published image does not carry this branch's dependencies
+        run: |
+          if git diff --quiet "${{ github.event.pull_request.base.sha || 'HEAD~1' }}" HEAD -- requirements.txt SuperBuild/ configure.sh 2>/dev/null; then
+            echo "Build inputs unchanged; the published image matches this branch."
+          else
+            echo "::notice::requirements.txt, SuperBuild/ or configure.sh changed. This job tests against the published image's dependencies; the release workflow proves the build."
+          fi
+
+      - name: Run the unit tests in the published image
+        run: |
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            --entrypoint bash \
+            "$IMAGE" \
+            -c 'set -e
+                tar -C /src --exclude=./SuperBuild --exclude=./.git -cf - . | tar -C /code -xf -
+                cd /code
+                ./test.sh'
