@@ -140,6 +140,16 @@ check_outputs() {
         || fail "the orthophoto is not georeferenced where the images were taken"
 }
 
+# Fails if the engine log in $1 shows a PoissonRecon run that aborted and
+# was retried. The retry still produces a mesh, so the outputs alone do not
+# show it (#24).
+check_no_retry() {
+    if grep -q "PoissonRecon failed with" "$1"; then
+        fail "PoissonRecon aborted and odm_meshing had to retry it"
+    fi
+    log "ok    no PoissonRecon retry in the engine log"
+}
+
 json_field() {
     python3 -I -c 'import json, sys; d = json.load(sys.stdin)
 for k in sys.argv[1].split("."): d = d[k]
@@ -156,9 +166,10 @@ run_engine() {
     # OPTIONS is a list of flags, so word splitting is wanted here
     # shellcheck disable=SC2086
     docker run --rm "${GPU_FLAGS[@]}" -v "$WORK:/datasets" "$IMAGE" \
-        --project-path /datasets project $OPTIONS
+        --project-path /datasets project $OPTIONS 2>&1 | tee "$WORK/engine.log"
 
     check_outputs
+    check_no_retry "$WORK/engine.log"
 }
 
 run_api() {
@@ -224,6 +235,9 @@ print(json.dumps(opts))' $OPTIONS)
 
     python3 -I -m zipfile -e "$WORK/all.zip" "$WORK/project"
     check_outputs
+
+    curl -fsS "$url/task/$uuid/output" > "$WORK/engine.log"
+    check_no_retry "$WORK/engine.log"
 }
 
 fetch_dataset
