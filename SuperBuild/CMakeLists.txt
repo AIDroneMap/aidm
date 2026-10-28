@@ -184,7 +184,12 @@ if (WIN32)
     set (POISSON_BUILD_CMD ${CMAKE_MAKE_PROGRAM} ${SB_SOURCE_DIR}/PoissonRecon/PoissonRecon.vcxproj /p:configuration=${CMAKE_BUILD_TYPE} /p:Platform=x64 /p:PlatformToolset=${CMAKE_VS_PLATFORM_TOOLSET} /p:WindowsTargetPlatformVersion=${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION})
     set (POISSON_BIN_PATH "x64/${CMAKE_BUILD_TYPE}/PoissonRecon.exe")
 else()
-    set (POISSON_BUILD_CMD  make -j${nproc} poissonrecon)
+    # SANITIZED_PR makes the flags PoissonRecon's threads share std::atomic.
+    # Without it they are plain chars written next to plain data, which
+    # works on x86-64 only because x86-64 keeps stores in order; on arm64 a
+    # thread can see a flag before its data and abort with "Failed to close
+    # loop" (#24). The Makefile appends its own flags to this CFLAGS.
+    set (POISSON_BUILD_CMD  ${CMAKE_COMMAND} -E env CFLAGS=-DSANITIZED_PR make -j${nproc} poissonrecon)
     set (POISSON_BIN_PATH "Linux/PoissonRecon")
     if (APPLE)
         set(POISSON_BUILD_CMD COMPILER=${CMAKE_CXX_COMPILER} make -j${nproc} -f Makefile.macos poissonrecon)
