@@ -36,7 +36,7 @@ AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX 
 - With `--bg-removal`, a failure to make a mask for one image logs "Cannot generate mask for <image>" again. Before, it raised a `NameError` and stopped the dataset stage.
 - When the point classification model cannot be downloaded, the warning names the model URL. Before, a `NameError` hid the cause behind a generic "Cannot classify using OpenPointClass" warning.
 - The GPU image no longer starts `PYTHONPATH` with an empty entry, which made Python import from the current directory.
-- When PoissonRecon fails and `odm_meshing` retries with half the threads, the warning names the thread count that failed. It used to log twice the new count, so a failure with 7 threads read "failed with 6 threads" and one with 3 threads read "failed with 2 threads".
+- When PoissonRecon aborts in a parallel run, the engine retries it once, serially, instead of halving the thread count until it reaches one. PoissonRecon's parallel loops use every CPU whatever `OMP_NUM_THREADS` says, so each halved retry repeated the run that had failed: with `--max-concurrency` 15, one abort cost three failed runs before the serial one (#24). The warning names the thread count that failed, for example "PoissonRecon failed with 14 threads, let's retry with 1...". It used to log twice the new count, so a failure with 7 threads read "failed with 6 threads". Evidence: `tests/test_mesh.py`.
 
 ## 0.1.0
 
