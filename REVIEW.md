@@ -28,7 +28,7 @@ Outside these buckets there is nothing. No style, no naming, no "I would have do
 
 The reviewer chooses the depth and says which depth was chosen and why. The floor is:
 
-- The repository's unit tests always run, in the reviewer's own checkout of the branch.
+- The repository's unit tests always count. Where the repository's tests run outside its build image, the reviewer runs them in its own checkout of the branch; where they need the image (the engine), the reviewer reads the unit test check on the pull request head and does not refuse the review for want of a local run.
 - The pull request declares its test depth, as `AGENTS.md` defines the depths for this repository, with one line of reasoning. The reviewer checks that the declared depth matches the change and raises it when it does not; it never lowers it. A depth claimed too low is a Fix, with the reason. When the declared or raised depth requires a test beyond the unit tests, the reviewer judges from the results of the run linked in the pull request, not from the diff, and does not run that test itself when a run already covers the tree.
 - Documentation, strings, and one-line fixes may be judged by reading plus the unit tests.
 
