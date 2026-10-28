@@ -81,8 +81,15 @@ Edit, run the unit tests and open pull requests from your own worktree. Do not b
 ## Tests
 
 Unit tests: `./test.sh`, or `./test.sh <name>` for `tests/test_<name>.py`. CI runs them on every push to a branch and on every pull request (`.github/workflows/tests.yml`), inside the last published CPU image with the branch copied over it. That image carries the dependencies of the last release, so a change to `requirements.txt`, `SuperBuild/` or `configure.sh` is reported there and proved by the full test, not by the unit tests.
-Full test: `scripts/smoke-test.sh`, on the dataset pinned in `scripts/smoke-test.conf`. Today it runs only in the release workflow: a maintainer starts a dry run with `gh workflow run release.yml --ref <branch>`, which builds the three images, runs the smoke test on each and the GPU test on Modal. It is not started by pull request events yet.
-The full test is required when a change touches: `stages/`, `run.py`, `modules/` where a stage reads it, `Dockerfile`, `gpu.Dockerfile`, `SuperBuild/`, `requirements.txt`, `configure.sh`, `docker/`, `.github/`. For such a change, ask the maintainer for a dry run and link it in the pull request; the reviewer follows `REVIEW.md`.
+Smoke test: `scripts/smoke-test.sh` on the dataset pinned in `scripts/smoke-test.conf`, cpu-amd64 only, on a throwaway image made from the published CPU image plus the branch. CI runs it when the pull request carries the label `smoke` (`.github/workflows/smoke.yml`), on labelling and on every later push.
+Full test: the release workflow's dry run, started by a maintainer with `gh workflow run release.yml --ref <branch>`: three images built from source, smoke test on each, GPU test on Modal. It is not started by pull request events.
+
+**Test depth.** Every pull request declares its depth in the description, with one line of reasoning: `Test depth: unit`, `Test depth: smoke`, `Test depth: full` or `Test depth: workflow`. The author chooses; the reviewer checks the choice and may raise it, never lower it; a maintainer settles a disagreement. When in doubt between two depths, claim the higher one.
+
+- `unit`: documentation, comments, tests, strings and messages outside the pipeline, scripts not used at run time.
+- `smoke`: a change inside `stages/`, `run.py` or a module a stage reads that does not change processing behaviour: logging, metadata, version strings, error messages, a parameter plumbed through unchanged, a refactor the author expects to leave outputs identical. Add the `smoke` label and link the run in the description.
+- `full`: anything that changes what the engine computes or how it computes it (algorithms, stage order, defaults, output content or format, concurrency), and any change to `Dockerfile`, `gpu.Dockerfile`, `SuperBuild/`, `requirements.txt`, `configure.sh`, `docker/` or `.github/workflows/release.yml`. Ask the maintainer for the dry run and link it in the description.
+- A pull request that only adds or changes a workflow other than `release.yml` declares `Test depth: workflow` and is proved by that workflow's own run on the pull request, linked in the description. It changes nothing else and lands alone.
 
 Every bug fix needs a test that fails without it. Every new feature needs tests that cover it. Two full engine runs are not identical end to end (reconstruction varies), so a test that compares outputs byte for byte starts from a stored reconstruction and compares the stages after it; sky masks are compared with a pixel tolerance.
 
