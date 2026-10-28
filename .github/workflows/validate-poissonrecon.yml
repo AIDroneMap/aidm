@@ -46,7 +46,8 @@ env:
 jobs:
   validate:
     name: ${{ matrix.name }}
-    # Runner images are pinned on purpose, as in release.yml.
+    # Runner images are pinned on purpose, as in release.yml. Timeouts:
+    # about 1.5 times a passing job, plus three build retries.
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
@@ -57,17 +58,17 @@ jobs:
             runner: ubuntu-24.04-arm
             dockerfile: Dockerfile
             rebuild: true
-            timeout: 150
+            timeout: 240
           - name: cpu-amd64
             runner: ubuntu-24.04
             dockerfile: Dockerfile
             rebuild: true
-            timeout: 180
+            timeout: 260
           - name: gpu-amd64
             runner: ubuntu-24.04
             dockerfile: gpu.Dockerfile
             rebuild: false
-            timeout: 200
+            timeout: 260
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,11 +98,28 @@ jobs:
       # No build cache: every C++ dependency is compiled in this run. On the
       # CPU jobs the builder stage is built first, with --no-cache, and kept
       # for the next step; the final stage then reuses it from this runner.
+      #
+      # Without the cache the SuperBuild downloads every dependency, and
+      # gitlab.com has refused the Eigen clone under load ("GitLab is
+      # currently unable to handle this request due to load"). A build that
+      # fails on a refused clone is tried again after 15 minutes, up to 4
+      # times. Any other build failure fails the step at once.
       - name: Build the builder stage, no cache
         if: matrix.rebuild
         env:
           DOCKERFILE: ${{ matrix.dockerfile }}
-        run: docker build --no-cache --progress=plain --target builder -f "$DOCKERFILE" -t aidm-validate-builder .
+        run: |
+          for try in 1 2 3 4; do
+            if docker build --no-cache --progress=plain --target builder -f "$DOCKERFILE" -t aidm-validate-builder . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+              exit 0
+            fi
+            if ! grep -q "Failed to clone repository" "$RUNNER_TEMP/build.log"; then
+              exit 1
+            fi
+            echo "::warning::try $try: a dependency clone was refused"
+            if [ "$try" -lt 4 ]; then sleep 900; fi
+          done
+          exit 1
 
       - name: Build the image
         env:
@@ -110,8 +128,18 @@ jobs:
         run: |
           nocache=--no-cache
           if [ "$REBUILD" = "true" ]; then nocache=; fi
-          # shellcheck disable=SC2086
-          docker build $nocache --progress=plain -f "$DOCKERFILE" -t aidm-validate .
+          for try in 1 2 3 4; do
+            # shellcheck disable=SC2086
+            if docker build $nocache --progress=plain -f "$DOCKERFILE" -t aidm-validate . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+              exit 0
+            fi
+            if ! grep -q "Failed to clone repository" "$RUNNER_TEMP/build.log"; then
+              exit 1
+            fi
+            echo "::warning::try $try: a dependency clone was refused"
+            if [ "$try" -lt 4 ]; then sleep 900; fi
+          done
+          exit 1
 
       # Same pin, same builder stage (compiler wrappers in place), same
       # make command as the SuperBuild; the binaries differ by one define.
