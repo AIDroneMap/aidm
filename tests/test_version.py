@@ -33,7 +33,6 @@ def runtime_sources():
 class TestVersion(unittest.TestCase):
     def test_version_files(self):
         self.assertRegex(log.get_version(), r"^\d+\.\d+\.\d+$")
-        self.assertFalse(os.path.exists(os.path.join(ROOT, "UPSTREAM_VERSION")))
 
     def test_version_string(self):
         self.assertEqual(log.get_version_string(), "AIDM %s" % log.get_version())
@@ -60,6 +59,12 @@ class TestVersion(unittest.TestCase):
     def test_no_odx_version_in_runtime_sources(self):
         for name in runtime_sources():
             self.assertNotRegex(read(name), ODX_VERSION, name)
+
+    def test_no_reader_of_upstream_version_file(self):
+        # CI copies the branch over the last published image, which still holds the
+        # deleted UPSTREAM_VERSION file, so check that no code reads it instead
+        for name in runtime_sources():
+            self.assertNotIn("UPSTREAM_VERSION", read(name), name)
 
     def test_engine_file(self):
         # The task API reports this file as the engine name in /info
