@@ -41,13 +41,21 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Two commits, so the build-inputs comparison below has a parent on push events.
+          fetch-depth: 2
 
       - name: Say when the published image does not carry this branch's dependencies
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
         run: |
-          if git diff --quiet "${{ github.event.pull_request.base.sha || 'HEAD~1' }}" HEAD -- requirements.txt SuperBuild/ configure.sh 2>/dev/null; then
-            echo "Build inputs unchanged; the published image matches this branch."
+          if [ -n "$BASE" ] && git rev-parse --verify --quiet "$BASE" >/dev/null; then
+            if git diff --quiet "$BASE" HEAD -- requirements.txt SuperBuild/ configure.sh; then
+              echo "Build inputs unchanged; the published image matches this branch."
+            else
+              echo "::notice::requirements.txt, SuperBuild/ or configure.sh changed. This job tests against the published image's dependencies; the release workflow proves the build."
+            fi
           else
-            echo "::notice::requirements.txt, SuperBuild/ or configure.sh changed. This job tests against the published image's dependencies; the release workflow proves the build."
+            echo "No base commit to compare against; skipping the build-inputs check."
           fi
 
       - name: Run the unit tests in the published image
