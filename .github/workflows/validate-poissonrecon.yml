@@ -108,8 +108,9 @@ jobs:
       # Without the cache the SuperBuild downloads every dependency, and
       # gitlab.com has refused the Eigen clone under load ("GitLab is
       # currently unable to handle this request due to load"). A build that
-      # fails on a refused clone is tried again after 15 minutes, up to 4
-      # times. Any other build failure fails the step at once.
+      # fails on a refused clone (a SuperBuild dependency or a submodule) is
+      # tried again after 15 minutes, up to 4 times. Any other build failure
+      # fails the step at once.
       - name: Build the builder stage, no cache
         if: matrix.rebuild
         env:
@@ -119,7 +120,7 @@ jobs:
             if docker build --no-cache --progress=plain --target builder -f "$DOCKERFILE" -t aidm-validate-builder . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
               exit 0
             fi
-            if ! grep -q "Failed to clone repository" "$RUNNER_TEMP/build.log"; then
+            if ! grep -q -E "Failed to clone|unable to handle this request due to load" "$RUNNER_TEMP/build.log"; then
               exit 1
             fi
             echo "::warning::try $try: a dependency clone was refused"
@@ -139,7 +140,7 @@ jobs:
             if docker build $nocache --progress=plain -f "$DOCKERFILE" -t aidm-validate . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
               exit 0
             fi
-            if ! grep -q "Failed to clone repository" "$RUNNER_TEMP/build.log"; then
+            if ! grep -q -E "Failed to clone|unable to handle this request due to load" "$RUNNER_TEMP/build.log"; then
               exit 1
             fi
             echo "::warning::try $try: a dependency clone was refused"
