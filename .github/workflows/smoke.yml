@@ -1,0 +1,52 @@
+# One smoke test of a branch on cpu-amd64, on request.
+#
+# For the "smoke" test depth in AGENTS.md: a change inside a stage or a module
+# a stage reads that does not change processing behaviour (strings, logging,
+# metadata, messages). Runs scripts/smoke-test.sh on a throwaway image made
+# from the last published CPU image with the branch copied over it. No image
+# is built from source, so a change to the build inputs is not proved here;
+# that is the full test in the release workflow.
+#
+# Trigger: add the label "smoke" to the pull request, or start it by hand on
+# a branch. The label stays on the pull request as the record that the depth
+# was claimed; every push to the pull request while the label is on runs it
+# again.
+
+name: Smoke
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+  workflow_dispatch:
+
+concurrency:
+  group: smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Last published CPU image. Move it in its own pull request when a release ships.
+  IMAGE: ghcr.io/aidronemap/aidm:0.1.0
+
+jobs:
+  smoke:
+    name: Smoke test, cpu-amd64
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'smoke')
+    # Runner images are pinned on purpose. Moving to a new image is its own PR.
+    runs-on: ubuntu-24.04
+    # About 1.5 times the measured smoke time on this runner with the 73-image set
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Make a throwaway image from the published image plus this branch
+        run: |
+          printf 'FROM %s\nCOPY . /code/\n' "$IMAGE" | docker build -t aidm-smoke:branch -f - .
+
+      - name: Smoke test
+        run: scripts/smoke-test.sh engine aidm-smoke:branch
