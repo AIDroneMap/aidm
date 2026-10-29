@@ -47,6 +47,9 @@ Run unit tests for the real SuperBuild configuration and a local submodule
 clone fixture for both submodule names and paths. The fixture blocks network protocols, reproduces the failed
 clone-local URL rewrite and proves the explicit submodule URL works.
 Check the mvs-texturing hook's pin guard and unchanged source directory.
+Preserve explicit empty configure, build and install commands when
+forwarding ExternalProject arguments. Otherwise CMake restores its default
+commands, as the first CI proof caught at MVE's install step.
 
 Use temporary branch CI for no-cache CPU and GPU image builds on
 GitHub-hosted amd64 runners. Map gitlab.com to loopback in each build.

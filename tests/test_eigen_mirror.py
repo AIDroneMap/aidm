@@ -34,12 +34,14 @@ class TestEigenMirror(unittest.TestCase):
             'cmake_minimum_required(VERSION 3.28)\n'
             'project(MirrorTest)\n'
             f'add_subdirectory("{ROOT / "SuperBuild"}" superbuild)\n'
-            'foreach(name eigen34 draco mvstexturing openpointclass)\n'
-            '  foreach(prop GIT_REPOSITORY GIT_TAG GIT_CONFIG CMAKE_ARGS)\n'
+            'foreach(name eigen34 draco mvstexturing openpointclass mve)\n'
+            '  foreach(prop GIT_REPOSITORY GIT_TAG GIT_CONFIG CMAKE_ARGS INSTALL_COMMAND)\n'
             '    get_property(value TARGET ${name} PROPERTY _EP_${prop})\n'
             '    file(WRITE "${CMAKE_BINARY_DIR}/${name}-${prop}" "${value}")\n'
             '  endforeach()\n'
-            'endforeach()\n')
+            'endforeach()\n'
+            'get_property(value TARGET mve PROPERTY _EP_INSTALL_COMMAND SET)\n'
+            'file(WRITE \"${CMAKE_BINARY_DIR}/mve-install-set\" \"${value}\")\n')
         build = self.work / "build"
         self.run_cmd("cmake", "-S", str(source), "-B", str(build),
                      f"-DSB_SOURCE_DIR={self.work / 'deps'}",
@@ -56,6 +58,8 @@ class TestEigenMirror(unittest.TestCase):
         self.assertEqual((build / "eigen34-GIT_TAG").read_text(),
                          "7176ae16238ded7fb5ed30a7f5215825b3abd134")
         self.assertEqual((build / "draco-GIT_TAG").read_text(), "383")
+        self.assertEqual((build / "mve-install-set").read_text(), "1")
+        self.assertEqual((build / "mve-INSTALL_COMMAND").read_text(), "")
         config = (build / "draco-GIT_CONFIG").read_text()
         self.assertEqual(config, "submodule.third_party/eigen.url=" + MIRROR)
         self.assertIn("-DCMAKE_PROJECT_Texturing_INCLUDE:FILEPATH=" +
@@ -146,7 +150,16 @@ class TestEigenMirror(unittest.TestCase):
             '  get_property(value TARGET ext_eigen PROPERTY _EP_${prop})\n'
             '  file(WRITE "${CMAKE_BINARY_DIR}/${prop}" "${value}")\n'
             'endforeach()\n'
-            'externalproject_add(other URL https://example.org/other.tar.gz)\n'
+            'externalproject_add(other URL https://example.org/other.tar.gz\n'
+            '  CONFIGURE_COMMAND \"\" BUILD_COMMAND \"\" INSTALL_COMMAND \"\")\n'
+            'foreach(name ext_eigen other)\n'
+            '  foreach(prop CONFIGURE_COMMAND BUILD_COMMAND INSTALL_COMMAND)\n'
+            '    get_property(is_set TARGET ${name} PROPERTY _EP_${prop} SET)\n'
+            '    file(WRITE \"${CMAKE_BINARY_DIR}/${name}-${prop}-set\" \"${is_set}\")\n'
+            '    get_property(value TARGET ${name} PROPERTY _EP_${prop})\n'
+            '    file(WRITE \"${CMAKE_BINARY_DIR}/${name}-${prop}\" \"${value}\")\n'
+            '  endforeach()\n'
+            'endforeach()\n'
             'get_property(value TARGET other PROPERTY _EP_URL)\n'
             'file(WRITE "${CMAKE_BINARY_DIR}/other-URL" "${value}")\n')
         return self.run_cmd(
@@ -167,6 +180,17 @@ class TestEigenMirror(unittest.TestCase):
         self.assertEqual((build / "URL").read_text(), "")
         self.assertEqual((build / "UPDATE_COMMAND").read_text(), "")
         self.assertEqual((build / "other-URL").read_text(), "https://example.org/other.tar.gz")
+
+    def test_hook_preserves_explicit_empty_build_steps(self):
+        result = self.configure_texturing(
+            "https://gitlab.com/libeigen/eigen/-/archive/3.3.2/eigen-3.3.2.tar.gz")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        build = self.work / "texturing-build"
+        for name in ("ext_eigen", "other"):
+            for prop in ("CONFIGURE_COMMAND", "BUILD_COMMAND", "INSTALL_COMMAND"):
+                with self.subTest(name=name, prop=prop):
+                    self.assertEqual((build / f"{name}-{prop}-set").read_text(), "1")
+                    self.assertEqual((build / f"{name}-{prop}").read_text(), "")
 
     def test_changed_archive_pin_fails_instead_of_using_old_commit(self):
         result = self.configure_texturing("https://example.org/changed-pin.tar.gz")
