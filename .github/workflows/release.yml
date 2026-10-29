@@ -10,7 +10,8 @@
 #   1. nightly-merge merges the open pull requests that change build inputs
 #      (SuperBuild/, Dockerfile, gpu.Dockerfile, docker/, configure.sh,
 #      requirements.txt) and are ready: approved by a code owner, every check
-#      green, and a passing dry run on their head commit. Pull requests that
+#      green, and a passing dry run on their head commit that ran the three
+#      builds and the GPU test (scripts/nightly-merge.py). Pull requests that
 #      change CI code (.github/, scripts/) are never merged here. Nothing is
 #      merged while an issue labelled nightly-failed is open.
 #   2. The images are built from master with no cache and tested on the full
@@ -92,61 +93,20 @@ jobs:
       sha: ${{ steps.merge.outputs.sha }}
       merged: ${{ steps.merge.outputs.merged }}
     steps:
+      # master as of the schedule, which holds scripts/nightly-merge.py
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The rules and their tests are in scripts/nightly-merge.py and
+      # tests/test_nightly_merge.py
       - name: Merge ready pull requests
         id: merge
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          merged=""
-          blocked=$(gh issue list --state open --label nightly-failed --json number --jq length)
-          if [ "$blocked" != "0" ]; then
-            echo "::warning::An open nightly-failed issue stops merging. Building master as it is."
-          else
-            prs=$(gh pr list --base master --state open --json number,isDraft --limit 100 \
-              --jq '[.[] | select(.isDraft | not) | .number] | sort | .[]')
-            for n in $prs; do
-              files=$(gh pr view "$n" --json files --jq '.files[].path')
-              # Only pull requests that change build inputs
-              if ! grep -qE '^(SuperBuild/|docker/|Dockerfile$|gpu\.Dockerfile$|configure\.sh$|requirements\.txt$)' <<< "$files"; then
-                continue
-              fi
-              # Never pull requests that change CI code
-              if grep -qE '^(\.github/|scripts/)' <<< "$files"; then
-                echo "#$n changes CI code: left for a maintainer"
-                continue
-              fi
-
-              pr=$(gh pr view "$n" --json headRefOid,reviewDecision,statusCheckRollup)
-              head=$(jq -r .headRefOid <<< "$pr")
-              decision=$(jq -r '.reviewDecision // ""' <<< "$pr")
-              not_green=$(jq '[.statusCheckRollup[] | (.conclusion // .state // "PENDING")
-                | select(IN("SUCCESS", "SKIPPED", "NEUTRAL") | not)] | length' <<< "$pr")
-              dry_runs=$(gh run list --workflow release.yml --commit "$head" --event workflow_dispatch \
-                --status success --json databaseId --jq length)
-
-              reasons=()
-              [ "$decision" = "APPROVED" ] || reasons+=("not approved by a code owner")
-              [ "$not_green" = "0" ] || reasons+=("$not_green checks not green")
-              [ "$dry_runs" != "0" ] || reasons+=("no passing dry run on $head")
-              if [ "${#reasons[@]}" -gt 0 ]; then
-                echo "#$n not ready: ${reasons[*]}"
-                continue
-              fi
-
-              if gh pr merge "$n" --merge --match-head-commit "$head"; then
-                echo "#$n merged"
-                merged="$merged #$n"
-              else
-                gh pr comment "$n" --body "The nightly could not merge this pull request (run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID). Bring it up to date with master and it is tried again the next night."
-              fi
-            done
-          fi
-
-          sha=$(gh api "repos/$GH_REPO/git/ref/heads/master" --jq .object.sha)
-          echo "Building master at $sha. Merged:${merged:- none}"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "merged=${merged# }" >> "$GITHUB_OUTPUT"
+        run: python3 -I scripts/nightly-merge.py
 
   check:
     name: Check version
