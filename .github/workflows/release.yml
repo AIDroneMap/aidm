@@ -141,7 +141,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # Only a run that publishes frees disk space. The hosted runners have
+      # 145 GB disks with about 86 GB free; a full build of the GPU image with
+      # no cache grew the disk by about 49 GB (run 40836313546), so a dry run
+      # fits without it and saves 1 to 2 minutes per job. The Disk usage
+      # step at the end of the job shows what a run used.
       - name: Free disk space
+        if: needs.check.outputs.publish == 'true'
         run: |
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
@@ -165,9 +171,12 @@ jobs:
       - name: Set build timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
+      # The runner is discarded after the job, so a dry run skips removing the
+      # builder at the end (6 to 18 seconds).
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
+          cleanup: ${{ needs.check.outputs.publish == 'true' }}
           buildkitd-config-inline: |
             [worker.oci]
               max-parallelism = 1
