@@ -44,6 +44,9 @@ jobs:
           # Two commits, so the build-inputs comparison below has a parent on push events.
           fetch-depth: 2
 
+      - name: Check release CPU image retention
+        run: python3 -I .github/scripts/test_release_cpu_digest.py
+
       - name: Say when the published image does not carry this branch's dependencies
         env:
           BASE: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}

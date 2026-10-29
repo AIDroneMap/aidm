@@ -3,7 +3,7 @@
 # A v* tag push publishes ghcr.io/aidronemap/aidm:<version>, :latest,
 # :<version>-gpu and :gpu, then opens a draft GitHub release.
 #
-# Run it by hand to test the build without publishing anything:
+# Run it by hand to test the build without publishing release tags:
 #   gh workflow run release.yml -f publish=false
 # Publish again from an existing tag, for example after a failed run:
 #   gh workflow run release.yml --ref v0.1.0 -f publish=true
@@ -11,7 +11,7 @@
 # Every run, dry run or tag, also tests the GPU image on a real NVIDIA GPU
 # (the gpu-test job). The GitHub runners have no GPU, so the build job only
 # proves that the GPU image falls back to the CPU. The build job pushes the
-# GPU image by digest (to ghcr.io/aidronemap/aidm-ci on dry runs, untagged),
+# amd64 CPU and GPU images by digest (to ghcr.io/aidronemap/aidm-ci on dry runs, untagged),
 # and gpu-test runs scripts/gpu-smoke-modal.py, which starts that exact
 # digest on a T4 on Modal and checks that the engine used the GPU. Nothing is
 # tagged unless gpu-test passes.
@@ -34,7 +34,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Push the images. Needs a tag ref. When false, build and test only.
+        description: Publish release tags. Needs a tag ref. When false, retain only untagged CI images.
         type: boolean
         default: false
 
@@ -48,7 +48,7 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/aidronemap/aidm
-  # Untagged GPU images from dry runs, so that gpu-test can pull them
+  # Untagged amd64 images for CPU benchmarks and the GPU test
   CI_IMAGE: ghcr.io/aidronemap/aidm-ci
   # Build cache, one tag per matrix entry. Holds layers only, never an
   # image that gets published. See "Build cache" in the README.
@@ -216,10 +216,10 @@ jobs:
 
       # Same inputs as the tested build, so every step comes from this runner's
       # local build cache.
-      # Dry runs push to CI_IMAGE, by digest only, so nothing is published.
+      # Dry runs retain amd64 images in CI_IMAGE by digest, without release tags.
       - name: Push by digest
         id: push
-        if: needs.check.outputs.publish == 'true' || matrix.name == 'gpu-amd64'
+        if: needs.check.outputs.publish == 'true' || matrix.name == 'cpu-amd64' || matrix.name == 'gpu-amd64'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -230,7 +230,7 @@ jobs:
 
       - name: Check that the pushed image is the tested one
         id: check-push
-        if: needs.check.outputs.publish == 'true' || matrix.name == 'gpu-amd64'
+        if: needs.check.outputs.publish == 'true' || matrix.name == 'cpu-amd64' || matrix.name == 'gpu-amd64'
         env:
           TESTED: ${{ steps.build.outputs.imageid }}
           PUSHED: ${{ steps.push.outputs.imageid }}
