@@ -129,6 +129,7 @@ endif()
 set(CMAKE_MODULE_PATH ${SB_ROOT_DIR}/cmake)
 
 include(ExternalProject)
+include(EigenMirror)
 include(ExternalProject-Setup)
 
 #########################################
@@ -257,6 +258,8 @@ externalproject_add(lastools
 externalproject_add(draco
     GIT_REPOSITORY    https://github.com/pierotofy/draco
     GIT_SHALLOW       ON
+    # A clone-local insteadOf rule does not reach submodule clones.
+    GIT_CONFIG        submodule.third_party/eigen.url=${AIDM_EIGEN_REPOSITORY}
     GIT_TAG           383
     PREFIX            ${SB_BINARY_DIR}/draco
     SOURCE_DIR        ${SB_SOURCE_DIR}/draco
