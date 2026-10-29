@@ -96,6 +96,25 @@ jobs:
         if: inputs.push
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      # The Dockerfile names its base by tag (ubuntu:24.04), and Docker Hub
+      # moved that tag between the tested build and the push rebuild of run
+      # 40808887713, so the rebuild missed the cache and gave another image.
+      # The pushing job resolves each base tag to a digest once, here, and
+      # every build in the job uses that digest through --build-context.
+      - name: Pin the base images for this job
+        if: inputs.push
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          contexts=
+          while read -r image; do
+            digest=$(docker buildx imagetools inspect "$image" | awk '/^Digest:/ { print $2; exit }')
+            [ -n "$digest" ]
+            echo "$image is $digest"
+            contexts="$contexts --build-context $image=docker-image://$image@$digest"
+          done < <(awk 'toupper($1) == "FROM" { print $2 }' "$DOCKERFILE" | sort -u)
+          echo "BASE_CONTEXTS=$contexts" >> "$GITHUB_ENV"
+
       # No build cache: every C++ dependency is compiled in this run. On the
       # CPU jobs the builder stage is built first, with --no-cache, and kept
       # for the next step; the final stage then reuses it from this runner.
@@ -114,7 +133,7 @@ jobs:
           BUILDER: ${{ steps.buildx.outputs.name }}
         run: |
           build="docker build"
-          if [ "$PUSH" = "true" ]; then build="docker buildx build --builder $BUILDER --load --provenance=false"; fi
+          if [ "$PUSH" = "true" ]; then build="docker buildx build --builder $BUILDER --load --provenance=false $BASE_CONTEXTS"; fi
           for try in 1 2 3 4; do
             # shellcheck disable=SC2086
             if $build --no-cache --progress=plain --target builder -f "$DOCKERFILE" -t aidm-validate-builder . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
@@ -138,7 +157,7 @@ jobs:
           nocache=--no-cache
           if [ "$REBUILD" = "true" ]; then nocache=; fi
           build="docker build"
-          if [ "$PUSH" = "true" ]; then build="docker buildx build --builder $BUILDER --load --provenance=false"; fi
+          if [ "$PUSH" = "true" ]; then build="docker buildx build --builder $BUILDER --load --provenance=false $BASE_CONTEXTS"; fi
           for try in 1 2 3 4; do
             # shellcheck disable=SC2086
             if $build $nocache --progress=plain -f "$DOCKERFILE" -t aidm-validate . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
@@ -293,7 +312,8 @@ jobs:
         run: |
           tested=$(docker image inspect aidm-validate --format '{{.Id}}')
           for push in false true; do
-            docker buildx build --builder "$BUILDER" --provenance=false --progress=plain -f "$DOCKERFILE" \
+            # shellcheck disable=SC2086
+            docker buildx build --builder "$BUILDER" --provenance=false $BASE_CONTEXTS --progress=plain -f "$DOCKERFILE" \
               --output "type=image,name=$CI_IMAGE,push-by-digest=true,name-canonical=true,push=$push" \
               --metadata-file "$RUNNER_TEMP/push-$push.json" .
             digest=$(jq -r '."containerimage.digest" // empty' "$RUNNER_TEMP/push-$push.json")
