@@ -81,6 +81,15 @@ class TestTiles(unittest.TestCase):
         make_dem(geotiff)
         self.assert_same_output(geotiff)
 
+    def test_memory_limited_output_matches_serial(self):
+        geotiff = os.path.join(self.root, "ortho.tif")
+        make_orthophoto(geotiff)
+        with mock.patch("modules.concurrency.virtual_memory",
+                        return_value=mock.Mock(available=32 * 1024 * 1024)), \
+                mock.patch.object(tiler, "parallel_map", wraps=tiler.parallel_map) as parallel:
+            self.assert_same_output(geotiff)
+        self.assertEqual([call.kwargs["max_workers"] for call in parallel.call_args_list], [1, 2])
+
     def test_global_range_is_cached_and_seedable(self):
         geotiff = os.path.join(self.root, "dem.tif")
         make_dem(geotiff)

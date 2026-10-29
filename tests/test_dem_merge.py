@@ -75,6 +75,15 @@ class TestEuclideanMergeDems(unittest.TestCase):
         _, second = self.run_merge('repeat2', 4)
         self.assertEqual(first, second)
 
+    def test_memory_limited_output_is_byte_identical_to_serial(self):
+        with mock.patch("modules.concurrency.virtual_memory",
+                        return_value=mock.Mock(available=64 * 1024 * 1024)), \
+                mock.patch.object(merge, "parallel_map", wraps=merge.parallel_map) as parallel:
+            _, serial = self.run_merge('limited_serial', 1)
+            _, limited = self.run_merge('limited_parallel', 4)
+        self.assertEqual([call.kwargs["max_workers"] for call in parallel.call_args_list], [1, 2])
+        self.assertEqual(serial, limited)
+
     def test_pixels_covered_by_one_dem(self):
         out, _ = self.run_merge('pixels', 4)
         with rasterio.open(out) as dst:

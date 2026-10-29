@@ -6,6 +6,7 @@ AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX 
 
 ### Changed
 
+- Static tile generation and split-merge DEM blending use the shared memory limit to choose their worker counts (#29). Evidence: `tests/test_tiles.py` and `tests/test_dem_merge.py` check the worker limit under low available memory and compare output bytes with serial runs.
 - CPU depth-patch matching projects coordinates and interpolates intensities in SIMD batches. Image reads remain guarded, and weighted NCC sums keep their original order. No fast-math flags or CPU targets change. Evidence: every OpenMVS build runs the scalar-equivalence checks in `SuperBuild/openmvs/WeightedPatchTest.cpp` and the patch checks in `SuperBuild/openmvs/test_patch.py`, which include that the patch step runs this edit after the arm64 width edit. Compiler diagnostics are recorded in [issue #53](https://github.com/AIDroneMap/aidm/issues/53). Performance has not been measured.
 - Both images are built for modern CPUs. Every C++ tool, dependencies included, is compiled for x86-64-v3 (AVX2, FMA, BMI2) on x86-64 and for ARMv8.2-A on arm64, instead of Nehalem (2008, no AVX) and ARMv8.0-A. This reverses "The CPU image is built for a generic CPU" from 0.1.0. See "Hardware we build for" in `README.md` and [ADR 0001](docs/adr/0001-build-for-modern-cpus.md).
 - The minimum CPU is now Intel Haswell (2013) or AMD Zen (2017) on x86-64, and ARMv8.2-A on arm64 (AWS Graviton 2, Ampere Altra, Apple M1, Raspberry Pi 5). Older CPUs, including the Raspberry Pi 4, are not supported.
