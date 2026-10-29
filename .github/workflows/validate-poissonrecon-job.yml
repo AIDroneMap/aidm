@@ -108,7 +108,9 @@ jobs:
         run: |
           contexts=
           while read -r image; do
-            digest=$(docker buildx imagetools inspect "$image" | awk '/^Digest:/ { print $2; exit }')
+            # awk reads to the end: exiting early would break the pipe and
+            # fail the step under pipefail.
+            digest=$(docker buildx imagetools inspect "$image" | awk '/^Digest:/ && !d { d = $2 } END { print d }')
             [ -n "$digest" ]
             echo "$image is $digest"
             contexts="$contexts --build-context $image=docker-image://$image@$digest"
