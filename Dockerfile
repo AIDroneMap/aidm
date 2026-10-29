@@ -10,7 +10,9 @@
 # The final stage copies /code and /usr/local as before, so the image gets
 # the same files. Keep gpu.Dockerfile in the same order.
 
-FROM ubuntu:24.04 AS builder
+# Base images are pinned by the digest of their multi-arch index; the tag
+# is kept for readers. Moving a base is its own pull request (AGENTS.md).
+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS builder
 
 # Env variables
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -39,7 +41,7 @@ COPY . ./
 
 ### Use a second image for the final asset to reduce the number and
 # size of the layers.
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
 
 # Image metadata. Keep the version equal to the VERSION file.
 LABEL org.opencontainers.image.source="https://github.com/AIDroneMap/aidm" \
