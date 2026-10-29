@@ -34,7 +34,7 @@ class TestEigenMirror(unittest.TestCase):
             'cmake_minimum_required(VERSION 3.28)\n'
             'project(MirrorTest)\n'
             f'add_subdirectory("{ROOT / "SuperBuild"}" superbuild)\n'
-            'foreach(name eigen34 draco mvstexturing)\n'
+            'foreach(name eigen34 draco mvstexturing openpointclass)\n'
             '  foreach(prop GIT_REPOSITORY GIT_TAG GIT_CONFIG CMAKE_ARGS)\n'
             '    get_property(value TARGET ${name} PROPERTY _EP_${prop})\n'
             '    file(WRITE "${CMAKE_BINARY_DIR}/${name}-${prop}" "${value}")\n'
@@ -62,6 +62,36 @@ class TestEigenMirror(unittest.TestCase):
                       str(ROOT / "SuperBuild/cmake/EigenMirror.cmake"),
                       (build / "mvstexturing-CMAKE_ARGS").read_text())
 
+        self.assertIn("-DCMAKE_PROJECT_opc_INCLUDE:FILEPATH=" +
+                      str(ROOT / "SuperBuild/cmake/EigenMirror.cmake"),
+                      (build / "openpointclass-CMAKE_ARGS").read_text())
+        self.check_submodule_clone(config, "third_party/eigen", "third_party/eigen")
+
+    def test_nested_lightgbm_submodule_uses_mirror(self):
+        source = self.work / "opc"
+        source.mkdir()
+        (source / "CMakeLists.txt").write_text(
+            'cmake_minimum_required(VERSION 3.28)\n'
+            'project(opc NONE)\n'
+            'include(ExternalProject)\n'
+            'ExternalProject_Add(lightgbm\n'
+            '  GIT_REPOSITORY https://github.com/microsoft/LightGBM\n'
+            '  GIT_TAG e4231205a3bac13662a81db9433ddaea8924fbce)\n'
+            'foreach(prop GIT_CONFIG GIT_TAG)\n'
+            '  get_property(value TARGET lightgbm PROPERTY _EP_${prop})\n'
+            '  file(WRITE "${CMAKE_BINARY_DIR}/${prop}" "${value}")\n'
+            'endforeach()\n')
+        build = self.work / "opc-build"
+        self.run_cmd("cmake", "-S", str(source), "-B", str(build),
+                     "-DCMAKE_PROJECT_opc_INCLUDE:FILEPATH=" +
+                     str(ROOT / "SuperBuild/cmake/EigenMirror.cmake"))
+        config = (build / "GIT_CONFIG").read_text()
+        self.assertEqual(config, "submodule.eigen.url=" + MIRROR)
+        self.assertEqual((build / "GIT_TAG").read_text(),
+                         "e4231205a3bac13662a81db9433ddaea8924fbce")
+        self.check_submodule_clone(config, "eigen", "external_libs/eigen")
+
+    def check_submodule_clone(self, config, submodule_name, submodule_path):
         eigen = self.work / "eigen"
         parent = self.work / "draco"
         for repo in (eigen, parent):
@@ -70,9 +100,11 @@ class TestEigenMirror(unittest.TestCase):
             self.run_cmd("git", "add", ".", cwd=repo)
             self.run_cmd("git", "-c", "user.name=Test", "-c", "user.email=test@example.org",
                          "commit", "-m", "test fixture", cwd=repo)
-        self.run_cmd("git", "submodule", "add", str(eigen), "third_party/eigen", cwd=parent)
+        self.run_cmd("git", "submodule", "add", str(eigen), submodule_path, cwd=parent)
         self.run_cmd("git", "config", "-f", ".gitmodules",
-                     "submodule.third_party/eigen.url", GITLAB, cwd=parent)
+                     "submodule." + submodule_path + ".url", GITLAB, cwd=parent)
+        self.run_cmd("git", "config", "-f", ".gitmodules", "--rename-section",
+                     "submodule." + submodule_path, "submodule." + submodule_name, cwd=parent)
         self.run_cmd("git", "add", ".", cwd=parent)
         self.run_cmd("git", "-c", "user.name=Test", "-c", "user.email=test@example.org",
                      "commit", "-m", "add Eigen submodule", cwd=parent)
@@ -92,7 +124,7 @@ class TestEigenMirror(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout)
                 expected = self.run_cmd("git", "rev-parse", "HEAD", cwd=eigen).stdout
                 actual = self.run_cmd("git", "rev-parse", "HEAD",
-                                      cwd=clone / "third_party/eigen").stdout
+                                      cwd=clone / submodule_path).stdout
                 self.assertEqual(actual, expected)
             else:
                 self.assertNotEqual(result.returncode, 0, result.stdout)

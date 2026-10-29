@@ -15,6 +15,7 @@ ExternalProject_Add(${_proj_name}
   #--Configure step-------------
   SOURCE_DIR        ${SB_SOURCE_DIR}/${_proj_name}
   CMAKE_ARGS
+    -DCMAKE_PROJECT_opc_INCLUDE:FILEPATH=${SB_ROOT_DIR}/cmake/EigenMirror.cmake
     -DPDAL_DIR=${SB_INSTALL_DIR}/lib/cmake/PDAL
     -DWITH_GBT=ON
     -DBUILD_PCTRAIN=OFF

@@ -1,4 +1,4 @@
-# Shared by the SuperBuild and mvs-texturing's project include hook.
+# Shared by the SuperBuild and the Texturing and opc project hooks.
 include_guard(GLOBAL)
 include(ExternalProject)
 
@@ -18,6 +18,12 @@ function(ExternalProject_Add name)
             GIT_REPOSITORY ${AIDM_EIGEN_REPOSITORY}
             GIT_TAG 477d1e81928a8514d2cca6a6e1e7e478eecd8634
             UPDATE_COMMAND ""
+        )
+    elseif(name STREQUAL "lightgbm")
+        # OpenPointClass downloads LightGBM, whose Eigen submodule is named
+        # "eigen" and lives at external_libs/eigen.
+        _ExternalProject_Add(${name} ${ARGN}
+            GIT_CONFIG submodule.eigen.url=${AIDM_EIGEN_REPOSITORY}
         )
     else()
         _ExternalProject_Add(${name} ${ARGN})
