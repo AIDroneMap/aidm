@@ -58,6 +58,8 @@ ExternalProject_Add(${_proj_name}
   UPDATE_COMMAND    ""
   PATCH_COMMAND     "${PYTHON_EXE_PATH}" "${SB_ROOT_DIR}/../docker/patch_openmvs.py"
                     "<SOURCE_DIR>/libs/Common/Config.h"
+                    COMMAND ${CMAKE_COMMAND} -DOPENMVS_SOURCE_DIR=<SOURCE_DIR>
+                    -P ${CMAKE_CURRENT_LIST_DIR}/OpenMVSWeightedPatch.cmake
   #--Configure step-------------
   SOURCE_DIR        ${SB_SOURCE_DIR}/${_proj_name}
   CMAKE_ARGS

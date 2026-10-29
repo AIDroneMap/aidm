@@ -6,6 +6,7 @@ AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX 
 
 ### Changed
 
+- CPU depth-patch matching projects coordinates and interpolates intensities in SIMD batches. Image reads remain guarded, and weighted NCC sums keep their original order. No fast-math flags or CPU targets change. Evidence: the scalar-equivalence checks in `SuperBuild/openmvs/WeightedPatchTest.cpp` run during every OpenMVS build, and compiler diagnostics are recorded in [issue #53](https://github.com/AIDroneMap/aidm/issues/53). Performance has not been measured.
 - Both images are built for modern CPUs. Every C++ tool, dependencies included, is compiled for x86-64-v3 (AVX2, FMA, BMI2) on x86-64 and for ARMv8.2-A on arm64, instead of Nehalem (2008, no AVX) and ARMv8.0-A. This reverses "The CPU image is built for a generic CPU" from 0.1.0. See "Hardware we build for" in `README.md` and [ADR 0001](docs/adr/0001-build-for-modern-cpus.md).
 - The minimum CPU is now Intel Haswell (2013) or AMD Zen (2017) on x86-64, and ARMv8.2-A on arm64 (AWS Graviton 2, Ampere Altra, Apple M1, Raspberry Pi 5). Older CPUs, including the Raspberry Pi 4, are not supported.
 - The new target does not make the engine faster. On an AMD Ryzen 9 9900X, against 0.1.0 built from the same commit, a full run takes the same time: 124.6 s against 125.1 s on Brighton Beach (18 images) and 302.3 s against 305.3 s on aidm-vineyard-small (73 images). Most stages change by less than 4%. The openmvs stage is 0.2% slower on aidm-vineyard-small and 6% to 8% slower on Brighton Beach (about 2 s of 29 s).
