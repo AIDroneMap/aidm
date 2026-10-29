@@ -15,6 +15,7 @@ ExternalProject_Add(${_proj_name}
   #--Configure step-------------
   SOURCE_DIR        ${SB_SOURCE_DIR}/${_proj_name}
   CMAKE_ARGS
+    -DCMAKE_PROJECT_Texturing_INCLUDE:FILEPATH=${SB_ROOT_DIR}/cmake/EigenMirror.cmake
     -DRESEARCH=OFF
     -DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}
     -DCMAKE_INSTALL_PREFIX:PATH=${SB_INSTALL_DIR}
