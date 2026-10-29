@@ -53,7 +53,7 @@ ExternalProject_Add(${_proj_name}
   #--Download step--------------
   DOWNLOAD_DIR      ${SB_DOWNLOAD_DIR}
   GIT_REPOSITORY    https://github.com/WebODM/openMVS
-  GIT_TAG           355
+  GIT_TAG           988e582f94919408beefd88efc782ba97f6d15ff # head of branch 355 on 2026-10-29
   #--Update/Patch step----------
   UPDATE_COMMAND    ""
   #--Configure step-------------
