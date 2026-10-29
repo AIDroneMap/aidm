@@ -10,7 +10,9 @@
 # The final stage copies /code and /usr/local as before, so the image gets
 # the same files. Keep Dockerfile in the same order.
 
-FROM nvidia/cuda:12.9.1-devel-ubuntu24.04 AS builder
+# Base images are pinned by the digest of their multi-arch index; the tag
+# is kept for readers. Moving a base is its own pull request (AGENTS.md).
+FROM nvidia/cuda:12.9.1-devel-ubuntu24.04@sha256:020bc241a628776338f4d4053fed4c38f6f7f3d7eb5919fecb8de313bb8ba47c AS builder
 
 # Env variables
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -39,7 +41,7 @@ COPY . ./
 
 ### Use a second image for the final asset to reduce the number and
 # size of the layers.
-FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04
+FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04@sha256:1287141d283b8f06f45681b56a48a85791398c615888b1f96bfb9fc981392d98
 
 # Image metadata. Keep the version equal to the VERSION file.
 LABEL org.opencontainers.image.source="https://github.com/AIDroneMap/aidm" \
