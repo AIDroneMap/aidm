@@ -56,6 +56,8 @@ ExternalProject_Add(${_proj_name}
   GIT_TAG           355
   #--Update/Patch step----------
   UPDATE_COMMAND    ""
+  PATCH_COMMAND     "${PYTHON_EXE_PATH}" "${SB_ROOT_DIR}/../docker/patch_openmvs.py"
+                    "<SOURCE_DIR>/libs/Common/Config.h"
   #--Configure step-------------
   SOURCE_DIR        ${SB_SOURCE_DIR}/${_proj_name}
   CMAKE_ARGS
