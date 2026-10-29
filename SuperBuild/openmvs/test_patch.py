@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -6,6 +7,7 @@ import unittest
 
 
 PATCH = Path(__file__).resolve().parents[1] / "cmake/OpenMVSWeightedPatch.cmake"
+RECIPE = Path(__file__).resolve().parents[1] / "cmake/External-OpenMVS.cmake"
 
 
 @unittest.skipUnless(PATCH.exists() and shutil.which("cmake"),
@@ -59,6 +61,27 @@ class TestOpenMVSWeightedPatch(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("source anchor is not unique", result.stderr)
         self.assertEqual(self.depth_source.read_text(), changed)
+
+
+@unittest.skipUnless(PATCH.exists(), "OpenMVS build inputs are needed")
+class TestOpenMVSPatchStep(unittest.TestCase):
+    def patch_step(self):
+        recipe = RECIPE.read_text()
+        self.assertEqual(recipe.count("PATCH_COMMAND"), 1,
+                         "a second PATCH_COMMAND joins both into one command line")
+        match = re.search(r"PATCH_COMMAND(.*?)#--Configure step", recipe, re.DOTALL)
+        self.assertIsNotNone(match)
+        return match.group(1)
+
+    def test_patch_step_runs_width_and_weighted_patch(self):
+        step = self.patch_step()
+        width = step.find("docker/patch_openmvs.py")
+        chained = step.find("COMMAND ${CMAKE_COMMAND}")
+        weighted = step.find("OpenMVSWeightedPatch.cmake")
+        self.assertNotEqual(width, -1, "arm64 width patch is missing")
+        self.assertNotEqual(weighted, -1, "weighted patch kernel is missing")
+        self.assertTrue(width < chained < weighted,
+                        "the weighted patch must be a second COMMAND of the patch step")
 
 
 if __name__ == "__main__":
