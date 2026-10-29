@@ -47,6 +47,10 @@ jobs:
         with:
           persist-credentials: false
 
+      # The sandbox script's own tests: a build never starts on another commit
+      - name: Test the sandbox script
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
       - name: Install the boat.dev SDK
         run: |
           python3 -m venv "$RUNNER_TEMP/boat"

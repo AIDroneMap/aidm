@@ -26,29 +26,46 @@ from pathlib import Path
 # Runs inside the sandbox as its user, who has docker and passwordless sudo.
 # The swap mirrors the release workflow's, so a build that fits there fits here.
 SCRIPT = r"""
-set -u
-cd /home/user
+# Setup stops at the first failure: a build must never start on another commit
+set -euo pipefail
+cd @WORK@
 echo "[build] $(nproc) vCPU, $(free -g | awk '/Mem:/{print $2}') GiB RAM,$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2)"
 sudo fallocate -l 16G /swapfile && sudo chmod 600 /swapfile && sudo mkswap -q /swapfile && sudo swapon /swapfile
-git clone --quiet --filter=blob:none @REPO_URL@ src && cd src && git checkout --quiet @COMMIT@
-echo "[build] commit $(git rev-parse HEAD)"
+git clone --quiet --filter=blob:none @REPO_URL@ src
+cd src
+git checkout --quiet @COMMIT@
+head=$(git rev-parse HEAD)
+if [ "$head" != "@COMMIT@" ]; then echo "[build] checked out $head, not @COMMIT@"; exit 1; fi
+echo "[build] commit $head"
 export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+# From here the script reads each exit status itself
+set +e +o pipefail
 start=$(date +%s)
-( docker buildx build --no-cache --progress=plain --platform linux/amd64 -f Dockerfile --load -t aidm-build:test . > /home/user/build.log 2>&1; echo $? > /home/user/build.exit ) &
-while [ ! -f /home/user/build.exit ]; do
-  sleep 60
-  echo "[build] $(( $(date +%s) - start )) s, load $(cut -d' ' -f1 /proc/loadavg), memory $(free -g | awk '/Mem:/{print $3}') GiB, swap $(free -g | awk '/Swap:/{print $3}') GiB: $(tail -1 /home/user/build.log | cut -c1-120)"
+( docker buildx build --no-cache --progress=plain --platform linux/amd64 -f Dockerfile --load -t aidm-build:test . > @WORK@/build.log 2>&1; echo $? > @WORK@/build.exit ) &
+while [ ! -f @WORK@/build.exit ]; do
+  sleep @POLL@
+  echo "[build] $(( $(date +%s) - start )) s, load $(cut -d' ' -f1 /proc/loadavg), memory $(free -g | awk '/Mem:/{print $3}') GiB, swap $(free -g | awk '/Swap:/{print $3}') GiB: $(tail -1 @WORK@/build.log | cut -c1-120)"
 done
-build_exit=$(cat /home/user/build.exit)
+build_exit=$(cat @WORK@/build.exit)
 echo "[build] build exit $build_exit after $(( $(date +%s) - start )) s"
-if [ "$build_exit" != 0 ]; then tail -60 /home/user/build.log; exit "$build_exit"; fi
+if [ "$build_exit" != 0 ]; then tail -60 @WORK@/build.log; exit "$build_exit"; fi
 smoke_start=$(date +%s)
-bash scripts/smoke-test.sh engine aidm-build:test > /home/user/smoke.log 2>&1
+bash scripts/smoke-test.sh engine aidm-build:test > @WORK@/smoke.log 2>&1
 smoke_exit=$?
 echo "[build] smoke test exit $smoke_exit after $(( $(date +%s) - smoke_start )) s"
-tail -20 /home/user/smoke.log
+tail -20 @WORK@/smoke.log
 exit "$smoke_exit"
 """
+
+
+def render_script(repository: str, commit: str, work: str = "/home/user", poll_seconds: int = 60) -> str:
+    """The sandbox script for one commit of one repository."""
+    return (
+        SCRIPT.replace("@REPO_URL@", shlex.quote(f"https://github.com/{repository}.git"))
+        .replace("@COMMIT@", commit)
+        .replace("@WORK@", shlex.quote(work))
+        .replace("@POLL@", str(poll_seconds))
+    )
 
 
 def main(argv=None) -> int:
@@ -66,7 +83,7 @@ def main(argv=None) -> int:
     from boat_sdk.api.boat_api import BoatApi
     from boat_sdk.models import CreateSandboxRequest, FileUrlRequest
 
-    script = SCRIPT.replace("@REPO_URL@", shlex.quote(f"https://github.com/{args.repository}.git")).replace("@COMMIT@", args.commit)
+    script = render_script(args.repository, args.commit)
     args.out.mkdir(parents=True, exist_ok=True)
     config = Configuration(host="https://boat.dev/api/v1", access_token=os.environ["BOAT_API_KEY"])
     exit_code = None
