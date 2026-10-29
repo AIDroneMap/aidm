@@ -46,9 +46,9 @@ class ReadCounter:
 
 
 def write_raster(path, rgb, alpha):
-    """Write a 64x64 RGBA GeoTIFF. rgb is one (r, g, b) color for every pixel
-    with alpha above 0. alpha is a 64x64 uint8 array."""
-    data = np.zeros((4, SIZE, SIZE), dtype=np.uint8)
+    """Write an RGBA GeoTIFF with one RGB color wherever alpha is nonzero."""
+    height, width = alpha.shape
+    data = np.zeros((4, height, width), dtype=np.uint8)
     for b in range(3):
         data[b][alpha != 0] = rgb[b]
     data[3] = alpha
@@ -56,8 +56,8 @@ def write_raster(path, rgb, alpha):
         path,
         "w",
         driver="GTiff",
-        width=SIZE,
-        height=SIZE,
+        width=width,
+        height=height,
         count=4,
         dtype="uint8",
         crs="EPSG:32615",
@@ -86,7 +86,7 @@ class TestOrthophotoMerge(unittest.TestCase):
         ortho = self.path(name + ".tif")
         cut = self.path(name + "_cut.tif")
         write_raster(ortho, rgb, alpha)
-        write_raster(cut, (0, 0, 0), np.zeros((SIZE, SIZE), dtype=np.uint8))
+        write_raster(cut, (0, 0, 0), np.zeros_like(alpha))
         return ortho, cut
 
     def fake_open(self, path, mode="r", *args, **kwargs):
@@ -95,11 +95,12 @@ class TestOrthophotoMerge(unittest.TestCase):
             return ReadCounter(dataset, os.fspath(path), self.reads, self.lock)
         return dataset
 
-    def run_merge(self, inputs):
+    def run_merge(self, inputs, max_workers=1):
         out = self.path("merged.tif")
         with mock.patch("modules.orthophoto.rasterio.open", side_effect=self.fake_open):
             result = orthophoto.merge(
-                inputs, out, orthophoto_vars={"BLOCKXSIZE": BLOCK, "BLOCKYSIZE": BLOCK}
+                inputs, out, orthophoto_vars={"BLOCKXSIZE": BLOCK, "BLOCKYSIZE": BLOCK},
+                max_workers=max_workers,
             )
         self.assertEqual(result, out)
         with real_open(out) as src:
@@ -107,6 +108,45 @@ class TestOrthophotoMerge(unittest.TestCase):
 
     def reads_of(self, path):
         return [w for p, w in self.reads if p == path]
+
+    def test_feather_blends_later_source_when_coverage_equals_block_width(self):
+        for height, width in ((SIZE, SIZE), (19, 21), (1, 21)):
+            for workers in (1, 2):
+                with self.subTest(height=height, width=width, workers=workers):
+                    # Each block has exactly one row of data. Coverage equals
+                    # its width, including partial tiles at the output edges.
+                    alpha = np.zeros((height, width), dtype=np.uint8)
+                    alpha[::BLOCK] = 255
+                    first = self.make_input("first", (200, 100, 50), alpha)
+                    feather = np.zeros_like(alpha)
+                    feather[::BLOCK] = 128
+                    second = self.make_input("second", (40, 80, 120), feather)
+
+                    out = self.run_merge([first, second], max_workers=workers)
+
+                    expected = np.zeros_like(out)
+                    # Source 1 supplies the base. Source 2 must still blend
+                    # after the destination alpha has become opaque.
+                    for band, value in enumerate((119, 89, 85)):
+                        expected[band][alpha != 0] = value
+                    expected[3] = alpha
+                    np.testing.assert_array_equal(out, expected)
+
+    def test_cutline_blends_after_all_feather_sources(self):
+        opaque = np.full((SIZE, SIZE), 255, dtype=np.uint8)
+        half = np.full((SIZE, SIZE), 128, dtype=np.uint8)
+        first = self.make_input("first", (200, 100, 50), opaque)
+        second = self.make_input("second", (40, 80, 120), half)
+        third = self.make_input("third", (80, 160, 20), half)
+        write_raster(third[1], (220, 60, 100), half)
+
+        out = self.run_merge([first, second, third])
+
+        # Feather results are (119, 89, 85), then (99, 124, 52).
+        # The cutline blends over that result last.
+        for band, value in enumerate((159, 91, 76)):
+            np.testing.assert_array_equal(out[band], np.full_like(out[band], value))
+        np.testing.assert_array_equal(out[3], opaque)
 
     def test_second_source_is_not_read_in_first_pass_when_block_is_full(self):
         opaque = np.full((SIZE, SIZE), 255, dtype=np.uint8)

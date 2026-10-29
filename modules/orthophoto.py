@@ -491,7 +491,6 @@ def merge(input_ortho_and_ortho_cuts, output_orthophoto, orthophoto_vars={}, max
 
                 local_sources = get_sources()
 
-                blocksize = dst_window.width
                 dst_rows, dst_cols = (dst_window.height, dst_window.width)
                 dst_shape = (dst_count, dst_rows, dst_cols)
 
@@ -520,8 +519,7 @@ def merge(input_ortho_and_ortho_cuts, output_orthophoto, orthophoto_vars={}, max
                     if np.count_nonzero(dstarr[-1]) == dst_rows * dst_cols:
                         break
 
-                # Second pass, write all feathered rasters
-                # blending the edges
+                # Blend every feathered source, even where the block is full.
                 for src, _ in local_sources:
                     src_window = tuple(zip(rowcol(
                             src.transform, left, top, op=round
@@ -539,10 +537,6 @@ def merge(input_ortho_and_ortho_cuts, output_orthophoto, orthophoto_vars={}, max
                         blended = temp[-1] / 255.0 * temp[b] + (1 - temp[-1] / 255.0) * dstarr[b]
                         np.copyto(dstarr[b], blended, casting='unsafe', where=where)
                     dstarr[-1][where] = 255.0
-
-                    # check if dest has any nodata pixels available
-                    if np.count_nonzero(dstarr[-1]) == blocksize:
-                        break
 
                 # Third pass, write cut rasters
                 # blending the cutlines
