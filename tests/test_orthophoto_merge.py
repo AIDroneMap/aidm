@@ -1,3 +1,4 @@
+import hashlib
 import os
 import shutil
 import tempfile
@@ -147,6 +148,28 @@ class TestOrthophotoMerge(unittest.TestCase):
         for band, value in enumerate((159, 91, 76)):
             np.testing.assert_array_equal(out[band], np.full_like(out[band], value))
         np.testing.assert_array_equal(out[3], opaque)
+
+    def test_normal_merge_is_byte_identical_to_master(self):
+        left = np.zeros((SIZE, SIZE), dtype=np.uint8)
+        left[:, : SIZE // 2] = 255
+        half = np.full((SIZE, SIZE), 128, dtype=np.uint8)
+        first = self.make_input("first", (200, 100, 50), left)
+        second = self.make_input("second", (40, 80, 120), half)
+        third = self.make_input("third", (80, 160, 20), half)
+        cut_alpha = np.zeros_like(half)
+        cut_alpha[SIZE // 4 : 3 * SIZE // 4] = 128
+        write_raster(third[1], (220, 60, 100), cut_alpha)
+
+        self.run_merge([first, second, third])
+
+        # Every block is full after the first pass, so master's feather exit
+        # never fires. This hashes the complete serial GeoTIFF, including its
+        # metadata and compressed tiles, from master at 245b34e8f01385906dc210a1c18cd1fab2d728b0.
+        with open(self.path("merged.tif"), "rb") as merged:
+            self.assertEqual(
+                hashlib.sha256(merged.read()).hexdigest(),
+                "128d98053fd2f6a8b6af0ccdccc669b346d197b478db32760e2a4415d9d65009",
+            )
 
     def test_second_source_is_not_read_in_first_pass_when_block_is_full(self):
         opaque = np.full((SIZE, SIZE), 255, dtype=np.uint8)

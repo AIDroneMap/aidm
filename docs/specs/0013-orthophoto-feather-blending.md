@@ -35,7 +35,12 @@ This is one bug fix and one pull request. It makes no performance claim.
   and two workers. The regression must fail before the fix and pass after it.
 - Check that three feather sources contribute in order and that a partially
   transparent cutline blends last. Keep the existing first-pass read tests.
+- Compare the complete serial GeoTIFF bytes with a recorded master hash for a
+  normal multi-source merge where the old feather exit never fires.
 - Run the normal unit suite in the published image through GitHub Actions.
-- Declare `Test depth: full`. Ask the maintainer to start the release dry run on
-  the final branch head and link its results in the pull request.
+- Test depth: unit. The smoke and full tests never call `merge()` because they
+  do not pass `--split`. The unit tests run it. The maintainer approved this
+  test depth for this change.
+- Coverage gap: split-merge orthophoto merge is not run on real images by any CI
+  test.
 - Obtain independent approval under `REVIEW.md` after the required checks pass.
