@@ -1,0 +1,316 @@
+# One validation job for issue #24, called by validate-poissonrecon.yml.
+# See that file for what the job checks.
+#
+# With push set, the job pushes its image to the CI package by digest once
+# every check has passed. The caller grants packages: write to that job
+# only. This file sets no permissions of its own, so each job runs with the
+# permissions of the job that calls it.
+
+name: Validate PoissonRecon job
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      dockerfile:
+        type: string
+        required: true
+      rebuild:
+        description: Also build PoissonRecon with and without SANITIZED_PR
+        type: boolean
+        required: true
+      push:
+        description: Push the image by digest after every check passed
+        type: boolean
+        default: false
+      timeout:
+        type: number
+        required: true
+
+# An explicit bash runs every step with -eo pipefail. Without it a step runs
+# with -e only, and "docker build ... | tee" takes the exit status of tee.
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Brighton Beach, 18 images, pinned by commit. BSD 2-Clause, Copyright (c)
+  # 2017, Piero Toffanin. Downloaded at run time, never committed.
+  DATASET_REPO: https://github.com/OpenDroneMap/drone_dataset_brighton_beach
+  DATASET_COMMIT: 9506a9bf09c9678b7d0b80b014af5b606c8a7255
+  DATASET_IMAGES: 18
+  # PoissonRecon runs per binary
+  RUNS: 20
+  # Untagged CI images, the package the release dry runs push to
+  CI_IMAGE: ghcr.io/aidronemap/aidm-ci
+
+jobs:
+  validate:
+    name: ${{ inputs.name }}
+    # Runner images are pinned on purpose, as in release.yml.
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # As in release.yml: build timestamps come from the commit, so the
+      # push rebuild gives the same image as the tested build.
+      - name: Set build timestamp
+        if: inputs.push
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift
+          docker system prune -af
+          df -h /
+
+      - name: Add swap
+        run: |
+          swapfile=/swapfile
+          if mountpoint -q /mnt; then swapfile=/mnt/swapfile; fi
+          sudo swapoff -a
+          sudo rm -f "$swapfile"
+          sudo fallocate -l 10G "$swapfile"
+          sudo chmod 600 "$swapfile"
+          sudo mkswap "$swapfile"
+          sudo swapon "$swapfile"
+          free -h
+
+      # No build cache: every C++ dependency is compiled in this run. On the
+      # CPU jobs the builder stage is built first, with --no-cache, and kept
+      # for the next step; the final stage then reuses it from this runner.
+      #
+      # Without the cache the SuperBuild downloads every dependency, and
+      # gitlab.com has refused the Eigen clone under load ("GitLab is
+      # currently unable to handle this request due to load"). A build that
+      # fails on a refused clone (a SuperBuild dependency or a submodule) is
+      # tried again after 15 minutes, up to 4 times. Any other build failure
+      # fails the step at once.
+      - name: Build the builder stage, no cache
+        if: inputs.rebuild
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          PUSH: ${{ inputs.push }}
+        run: |
+          provenance=
+          if [ "$PUSH" = "true" ]; then provenance=--provenance=false; fi
+          for try in 1 2 3 4; do
+            # shellcheck disable=SC2086
+            if docker build $provenance --no-cache --progress=plain --target builder -f "$DOCKERFILE" -t aidm-validate-builder . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+              exit 0
+            fi
+            if ! grep -q -E "Failed to clone|unable to handle this request due to load" "$RUNNER_TEMP/build.log"; then
+              exit 1
+            fi
+            echo "::warning::try $try: a dependency clone was refused"
+            if [ "$try" -lt 4 ]; then sleep 900; fi
+          done
+          exit 1
+
+      - name: Build the image
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          REBUILD: ${{ inputs.rebuild }}
+          PUSH: ${{ inputs.push }}
+        run: |
+          nocache=--no-cache
+          if [ "$REBUILD" = "true" ]; then nocache=; fi
+          provenance=
+          if [ "$PUSH" = "true" ]; then provenance=--provenance=false; fi
+          for try in 1 2 3 4; do
+            # shellcheck disable=SC2086
+            if docker build $provenance $nocache --progress=plain -f "$DOCKERFILE" -t aidm-validate . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+              exit 0
+            fi
+            if ! grep -q -E "Failed to clone|unable to handle this request due to load" "$RUNNER_TEMP/build.log"; then
+              exit 1
+            fi
+            echo "::warning::try $try: a dependency clone was refused"
+            if [ "$try" -lt 4 ]; then sleep 900; fi
+          done
+          exit 1
+
+      # Same pin, same builder stage (compiler wrappers in place), same
+      # make command as the SuperBuild; the binaries differ by one define.
+      - name: Build PoissonRecon with and without SANITIZED_PR
+        if: inputs.rebuild
+        env:
+          PUSH: ${{ inputs.push }}
+        run: |
+          tag=$(awk '/pierotofy\/PoissonRecon.git/{getline; print $2}' SuperBuild/CMakeLists.txt)
+          echo "PoissonRecon tag $tag"
+          mkdir -p "$RUNNER_TEMP/bin"
+          docker run --rm -v "$RUNNER_TEMP/bin:/out" -e TAG="$tag" --entrypoint bash aidm-validate-builder -c '
+            set -euo pipefail
+            git clone -q https://github.com/pierotofy/PoissonRecon.git /tmp/pr
+            cd /tmp/pr
+            git checkout -q "$TAG"
+            git log -1 --format="PoissonRecon %H"
+            g++ --version | head -n 1
+            make -j"$(nproc)" poissonrecon
+            cp Bin/Linux/PoissonRecon /out/PoissonRecon-plain
+            make clean > /dev/null
+            env CFLAGS=-DSANITIZED_PR make -j"$(nproc)" poissonrecon
+            cp Bin/Linux/PoissonRecon /out/PoissonRecon-sanitized
+          '
+          ls -la "$RUNNER_TEMP/bin"
+          docker rmi aidm-validate-builder
+          # A pushing job keeps the build cache: the push rebuilds the tested
+          # image from it, layer for layer.
+          if [ "$PUSH" != "true" ]; then docker builder prune -af; fi
+          df -h /
+
+      - name: Download Brighton Beach
+        run: |
+          work="$RUNNER_TEMP/work"
+          mkdir -p "$work/project/images"
+          curl -fsSL "$DATASET_REPO/archive/$DATASET_COMMIT.tar.gz" \
+            | tar -xz -C "$work/project/images" --strip-components=2 --wildcards '*/images/*'
+          count=$(find "$work/project/images" -type f -iname '*.jpg' | wc -l)
+          echo "$count images"
+          [ "$count" -eq "$DATASET_IMAGES" ]
+
+      - name: Run the engine
+        run: |
+          work="$RUNNER_TEMP/work"
+          docker run --rm -v "$work:/datasets" aidm-validate \
+            --project-path /datasets project --dsm 2>&1 | tee "$work/engine.log"
+
+      - name: Check the outputs, the georeferencing and the retry
+        run: |
+          work="$RUNNER_TEMP/work"
+          missing=0
+          for out in odm_orthophoto/odm_orthophoto.tif odm_dem/dsm.tif \
+                     odm_georeferencing/odm_georeferenced_model.laz \
+                     odm_texturing/odm_textured_model_geo.obj \
+                     odm_filterpoints/point_cloud.ply; do
+            if [ -s "$work/project/$out" ]; then echo "ok    $out"; else echo "MISSING OR EMPTY  $out"; missing=1; fi
+          done
+          [ "$missing" -eq 0 ]
+          docker run --rm -v "$work:/datasets" -v "$PWD/scripts:/smoke:ro" --entrypoint python3 aidm-validate \
+            -I /smoke/check-georeferencing.py /datasets/project
+          if grep -q "PoissonRecon failed with" "$work/engine.log"; then
+            echo "::error::PoissonRecon aborted in the engine run and odm_meshing retried it"
+            exit 1
+          fi
+          echo "ok    no PoissonRecon retry in the engine log"
+
+      - name: Run PoissonRecon ${{ env.RUNS }} times per binary
+        env:
+          NAME: ${{ inputs.name }}
+          REBUILD: ${{ inputs.rebuild }}
+        run: |
+          work="$RUNNER_TEMP/work"
+          variants=(shipped)
+          if [ "$REBUILD" = "true" ]; then variants=(plain sanitized shipped); fi
+          declare -A failed aborted
+          for v in "${variants[@]}"; do failed[$v]=0; aborted[$v]=0; done
+
+          for i in $(seq 1 "$RUNS"); do
+            for v in "${variants[@]}"; do
+              if [ "$v" = shipped ]; then bin=/code/SuperBuild/install/bin/PoissonRecon; else bin=/validate/PoissonRecon-$v; fi
+              sudo rm -rf "$work/race"
+              mkdir -p "$work/race"
+              status=0
+              # The arguments odm_meshing passes, at its default depth
+              docker run --rm -v "$work:/datasets" -v "$RUNNER_TEMP/bin:/validate:ro" --entrypoint "$bin" aidm-validate \
+                --in /datasets/project/odm_filterpoints/point_cloud.ply \
+                --out /datasets/race/mesh.ply \
+                --depth 11 --pointWeight 4.0 --samplesPerNode 1.0 --density \
+                --tempDir /datasets/race --confidence > "$work/race.log" 2>&1 || status=$?
+              if [ "$status" -eq 0 ] && [ -s "$work/race/mesh.ply" ]; then
+                echo "[race] $v run $i: ok"
+              else
+                failed[$v]=$(( ${failed[$v]} + 1 ))
+                if grep -q "Failed to close loop" "$work/race.log"; then aborted[$v]=$(( ${aborted[$v]} + 1 )); fi
+                echo "[race] $v run $i: FAILED, exit $status"
+                grep -E "Failed to close loop|terminate called|EXCEPTION" "$work/race.log" | head -n 3 || true
+              fi
+            done
+          done
+
+          {
+            echo "### PoissonRecon on $NAME, $RUNS runs per binary"
+            echo
+            echo "| binary | failed | of which \"Failed to close loop\" |"
+            echo "| --- | --- | --- |"
+            for v in "${variants[@]}"; do echo "| $v | ${failed[$v]} | ${aborted[$v]} |"; done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          bad=0
+          for v in sanitized shipped; do
+            if [ -n "${failed[$v]:-}" ] && [ "${failed[$v]}" -gt 0 ]; then
+              echo "::error::$v PoissonRecon failed ${failed[$v]} of $RUNS runs"
+              bad=1
+            fi
+          done
+          if [ "$REBUILD" = "true" ] && [ "${failed[plain]}" -eq 0 ]; then
+            echo "::warning::the plain build did not fail on $NAME, so this runner did not reproduce the race"
+          fi
+          exit "$bad"
+
+      # Runs only after every check above passed. The image goes to the CI
+      # package by digest, untagged, as the release dry runs push theirs.
+      - name: Log in to ghcr.io
+        if: inputs.push
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The push rebuilds the image from this runner's build cache. First the
+      # rebuild is exported without a push and checked against the tested
+      # image, so an image that differs is never pushed. Then the same build
+      # is pushed and checked again.
+      - name: Push the tested image by digest
+        if: inputs.push
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          tested=$(docker image inspect aidm-validate --format '{{.Id}}')
+          for push in false true; do
+            docker buildx build --provenance=false --progress=plain -f "$DOCKERFILE" \
+              --output "type=image,name=$CI_IMAGE,push-by-digest=true,name-canonical=true,push=$push" \
+              --metadata-file "$RUNNER_TEMP/push-$push.json" .
+            digest=$(jq -r '."containerimage.digest" // empty' "$RUNNER_TEMP/push-$push.json")
+            config=$(jq -r '."containerimage.config.digest" // empty' "$RUNNER_TEMP/push-$push.json")
+            echo "push=$push: manifest $digest, config $config, tested $tested"
+            scripts/check-pushed-image.sh "$tested" "$config" "$digest"
+          done
+          echo "DIGEST=$digest" >> "$GITHUB_ENV"
+
+      - name: Write the image to the summary
+        if: inputs.push
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          NAME: ${{ inputs.name }}
+        run: |
+          {
+            echo "### Image pushed by $NAME"
+            echo
+            echo "- Image: \`$CI_IMAGE@$DIGEST\`"
+            echo "- Digest: \`$DIGEST\`"
+            echo "- Commit built: \`$(git rev-parse HEAD)\`"
+            echo "- Run: $RUN_ID, attempt $RUN_ATTEMPT"
+            echo
+            echo "Pull with Apple's container tool, after logging in to ghcr.io:"
+            echo
+            echo "    container image pull $CI_IMAGE@$DIGEST"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Disk usage
+        if: always()
+        run: df -h /
