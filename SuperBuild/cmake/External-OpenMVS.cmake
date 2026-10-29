@@ -56,6 +56,8 @@ ExternalProject_Add(${_proj_name}
   GIT_TAG           988e582f94919408beefd88efc782ba97f6d15ff # head of branch 355 on 2026-10-29
   #--Update/Patch step----------
   UPDATE_COMMAND    ""
+  PATCH_COMMAND     "${PYTHON_EXE_PATH}" "${SB_ROOT_DIR}/../docker/patch_openmvs.py"
+                    "<SOURCE_DIR>/libs/Common/Config.h"
   #--Configure step-------------
   SOURCE_DIR        ${SB_SOURCE_DIR}/${_proj_name}
   CMAKE_ARGS
