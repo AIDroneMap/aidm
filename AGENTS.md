@@ -136,6 +136,14 @@ Every bug fix needs a test that fails without it. Every new feature needs tests 
 - Never commit hostnames, IP addresses, bucket names, account names, model or tool names of the agents, or any reference to private infrastructure, private repositories or private products. This repository is public.
 - Never commit drone images or datasets. Link to public datasets instead.
 
+## Lessons from past mistakes
+
+Each rule here comes from a mistake that cost runner time or produced a result that could not be trusted. Follow them. When a mistake teaches something that applies beyond its own pull request, add a rule here in a pull request of its own, with the pull request or run where it happened.
+
+- **Reuse what the release workflow already does.** When a workflow needs something `release.yml` already does, such as pushing an image by digest, checking that the pushed image is the tested one, using a build cache or logging in to a registry, copy its mechanism: the same actions, builder and settings. Do not write your own. PR #44: a push by digest written from scratch used Docker's default builder, which cannot push by digest; `release.yml` uses a `docker-container` builder for that. The job failed after its tests had passed, and the new run cost more than an hour.
+- **A pipe in a workflow step needs pipefail.** A `run:` step with no `shell:` runs as `bash -e` without `pipefail`, so `docker build ... | tee build.log` takes the exit status of `tee` and passes when the build fails. Set `defaults: run: shell: bash` in the workflow, which adds `pipefail`, or `set -o pipefail` in the step. PR #44: a failed GPU build passed its step, and the whole run had to be thrown away.
+- **Test a failure check against a real failure.** A step that detects a failure from log text, such as a retry when a clone is refused, must match the text of a real failed run before you rely on it. Take the text from the run's log, not from memory. PR #44: the retry matched a refused direct clone but not a refused submodule clone, so the next run failed without retrying.
+
 ## When to stop and ask
 
 Stop and ask the maintainer before you:
