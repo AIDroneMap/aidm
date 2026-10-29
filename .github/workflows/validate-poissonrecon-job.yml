@@ -87,6 +87,15 @@ jobs:
           sudo swapon "$swapfile"
           free -h
 
+      # Docker's default builder cannot push an image untagged, by digest.
+      # The pushing job builds with a docker-container builder instead, as
+      # release.yml does, so the tested image and the pushed one come from
+      # the same build cache. The other jobs keep the default builder.
+      - name: Set up a docker-container builder
+        id: buildx
+        if: inputs.push
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
       # No build cache: every C++ dependency is compiled in this run. On the
       # CPU jobs the builder stage is built first, with --no-cache, and kept
       # for the next step; the final stage then reuses it from this runner.
@@ -102,12 +111,13 @@ jobs:
         env:
           DOCKERFILE: ${{ inputs.dockerfile }}
           PUSH: ${{ inputs.push }}
+          BUILDER: ${{ steps.buildx.outputs.name }}
         run: |
-          provenance=
-          if [ "$PUSH" = "true" ]; then provenance=--provenance=false; fi
+          build="docker build"
+          if [ "$PUSH" = "true" ]; then build="docker buildx build --builder $BUILDER --load --provenance=false"; fi
           for try in 1 2 3 4; do
             # shellcheck disable=SC2086
-            if docker build $provenance --no-cache --progress=plain --target builder -f "$DOCKERFILE" -t aidm-validate-builder . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+            if $build --no-cache --progress=plain --target builder -f "$DOCKERFILE" -t aidm-validate-builder . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
               exit 0
             fi
             if ! grep -q -E "Failed to clone|unable to handle this request due to load" "$RUNNER_TEMP/build.log"; then
@@ -123,14 +133,15 @@ jobs:
           DOCKERFILE: ${{ inputs.dockerfile }}
           REBUILD: ${{ inputs.rebuild }}
           PUSH: ${{ inputs.push }}
+          BUILDER: ${{ steps.buildx.outputs.name }}
         run: |
           nocache=--no-cache
           if [ "$REBUILD" = "true" ]; then nocache=; fi
-          provenance=
-          if [ "$PUSH" = "true" ]; then provenance=--provenance=false; fi
+          build="docker build"
+          if [ "$PUSH" = "true" ]; then build="docker buildx build --builder $BUILDER --load --provenance=false"; fi
           for try in 1 2 3 4; do
             # shellcheck disable=SC2086
-            if docker build $provenance $nocache --progress=plain -f "$DOCKERFILE" -t aidm-validate . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+            if $build $nocache --progress=plain -f "$DOCKERFILE" -t aidm-validate . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
               exit 0
             fi
             if ! grep -q -E "Failed to clone|unable to handle this request due to load" "$RUNNER_TEMP/build.log"; then
@@ -278,10 +289,11 @@ jobs:
         if: inputs.push
         env:
           DOCKERFILE: ${{ inputs.dockerfile }}
+          BUILDER: ${{ steps.buildx.outputs.name }}
         run: |
           tested=$(docker image inspect aidm-validate --format '{{.Id}}')
           for push in false true; do
-            docker buildx build --provenance=false --progress=plain -f "$DOCKERFILE" \
+            docker buildx build --builder "$BUILDER" --provenance=false --progress=plain -f "$DOCKERFILE" \
               --output "type=image,name=$CI_IMAGE,push-by-digest=true,name-canonical=true,push=$push" \
               --metadata-file "$RUNNER_TEMP/push-$push.json" .
             digest=$(jq -r '."containerimage.digest" // empty' "$RUNNER_TEMP/push-$push.json")
