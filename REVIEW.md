@@ -30,6 +30,8 @@ The reviewer chooses the depth and says which depth was chosen and why. The floo
 
 - The repository's unit tests always count. Where the repository's tests run outside its build image, the reviewer runs them in its own checkout of the branch; where they need the image (the engine), the reviewer reads the unit test check on the pull request head and does not refuse the review for want of a local run.
 - The pull request declares its test depth, as `AGENTS.md` defines the depths for this repository, with one line of reasoning. The reviewer checks that the declared depth matches the change and raises it when it does not; it never lowers it. A depth claimed too low is a Fix, with the reason. When the declared or raised depth requires a test beyond the unit tests, the reviewer judges from the results of the run linked in the pull request, not from the diff, and does not run that test itself when a run already covers the tree.
+- A test proves a change only when it runs the changed code. The reviewer checks that the test named in the depth line reaches the changed code, using what `AGENTS.md` says each test runs. A green run that never reaches the changed code is not evidence for it: asking for a test that does is a Fix. When no test reaches the changed code on real data, the pull request says so in a `Coverage gap:` line; a missing line is a Fix.
+- Where `AGENTS.md` lets the author start a test run itself, the reviewer checks each linked run against the conditions there (branch, inputs, commit, number of runs). A run outside those conditions is a Fix. A run that could publish (on the default branch, on a tag, or with publishing turned on), or that the author started on a branch that changes CI code (see below), is a Block.
 - Documentation, strings, and one-line fixes may be judged by reading plus the unit tests.
 
 Existing green checks and linked runs on the pull request are evidence. The reviewer does not rerun one that already passed on the same tree. If the reviewer judges that the change deserves more than the highest depth before merge (a larger dataset, a run on real hardware), it says so; a maintainer decides.
@@ -52,6 +54,17 @@ The reviewer never measures performance and never writes a number for speed or m
 5. After three rounds without an end, the pull request gets the label `needs-maintainer` and the author writes a summary of what is still disputed. A maintainer takes it from there.
 
 A maintainer may merge over a block at any time, with the reason written on the pull request.
+
+### Pull requests that change CI code
+
+CI code is everything a workflow runs on the runner itself, where the repository's secrets and tokens are: the workflows, and the scripts they run along with every file those scripts load. `AGENTS.md` says which folders hold it in each repository; where it does not, CI code is everything under `.github/`. A run started on a branch uses that branch's copy of the CI code with the repository's credentials, whatever its inputs say, and some of it runs on every push.
+
+So a pull request that changes CI code is never cleared by the reviewer alone. The reviewer reviews it as usual. When a round has no blocks and no fixes, the review ends with `Approve`, the reviewer adds the label `needs-maintainer`, and says in the review that a maintainer must check the CI code change before merge. The reviewer also checks the diff for these and lists each one it finds as a Block:
+
+- a new use of a secret, a token or a deployment environment, or wider `permissions`;
+- a step or script that sends data, a secret or a token out of the run, or writes a credential to a file or a log;
+- a trigger added for events from forks;
+- a workflow that starts running, on the runner, a file from outside the CI code folders.
 
 ## Tone
 
