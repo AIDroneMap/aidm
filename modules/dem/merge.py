@@ -9,7 +9,7 @@ from modules import log
 from modules import io
 import os
 import threading
-from modules.concurrency import parallel_map
+from modules.concurrency import max_workers_for_memory, parallel_map
 
 def euclidean_merge_dems(input_dems, output_dem, creation_options={}, euclidean_map_source=None, max_workers=1):
     """
@@ -22,7 +22,8 @@ def euclidean_merge_dems(input_dems, output_dem, creation_options={}, euclidean_
     by a weighted average based on such euclidean distance.
 
     Output blocks are independent, so they are computed in parallel
-    with max_workers threads. Blocks are still written in block order,
+    with up to max_workers threads, limited by available memory.
+    Blocks are still written in block order,
     so the output file is byte-identical to a serial run. With
     max_workers=1 (the default) everything runs in the calling thread.
     """
@@ -253,6 +254,8 @@ def euclidean_merge_dems(input_dems, output_dem, creation_options={}, euclidean_
             dstarr = None
 
         try:
+            # Allow 16 MiB per 512 x 512 block for arrays and GDAL handles.
+            max_workers = max_workers_for_memory(16 * 1024 * 1024, max_workers)
             parallel_map(process_block, list(enumerate(block_windows)),
                          max_workers=max_workers, single_thread_fallback=False)
         finally:

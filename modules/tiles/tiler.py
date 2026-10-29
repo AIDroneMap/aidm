@@ -4,7 +4,7 @@ import math
 import shutil
 import threading
 from modules import log
-from modules.concurrency import parallel_map
+from modules.concurrency import max_workers_for_memory, parallel_map
 from modules import system
 from modules import io
 from .static_tiler import StaticTiler
@@ -34,7 +34,9 @@ def generate_tiles(geotiff, output_dir, max_concurrency, resolution):
         if parent._ds.dtypes[0] != "uint8":
             global_range = parent.global_range()
 
-        log.INFO("Generating %s tiles with %s workers" % (len(tiles), max(1, max_concurrency)))
+        # Allow 8 MiB per 256 x 256 tile for conversion buffers and GDAL handles.
+        max_workers = max_workers_for_memory(8 * 1024 * 1024, max_concurrency)
+        log.INFO("Generating %s tiles with %s workers" % (len(tiles), max_workers))
 
         # GDAL datasets are not thread-safe: each thread opens its own
         local = threading.local()
@@ -58,7 +60,7 @@ def generate_tiles(geotiff, output_dir, max_concurrency, resolution):
                 with lock:
                     errors.append(e)
 
-        parallel_map(process_tile, tiles, max_workers=max_concurrency)
+        parallel_map(process_tile, tiles, max_workers=max_workers)
 
         if errors:
             raise errors[0]
