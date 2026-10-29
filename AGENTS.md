@@ -140,6 +140,7 @@ The nightly and runs that publish are the only writers of the build cache. A dry
 
 - Never commit secrets, tokens, passwords or keys. Configuration comes from the environment.
 - Never commit hostnames, IP addresses, bucket names, account names, model or tool names of the agents, or any reference to private infrastructure, private repositories or private products. This repository is public.
+- Never put a link to an agent session (for example a `Claude-Session:` trailer or a session URL) in a commit message, a pull request, an issue or a comment, even when your tool adds one by default. Remove it before you commit or post. A session link points to private infrastructure.
 - Never commit drone images or datasets. Link to public datasets instead.
 
 ## Lessons from past mistakes
