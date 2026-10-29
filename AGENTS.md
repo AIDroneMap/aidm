@@ -38,7 +38,7 @@ Follow this order for any change larger than a small fix:
 3. **Issues.** Split the spec into issues small enough for one pull request each.
 4. **Implement.** One issue per branch, one worktree per branch, one logical change per pull request.
 5. **Review.** Open the pull request. When it is open and its first CI run has started, run `/request-review <number>` and follow the loop in `REVIEW.md`. The loop ends on approval, or hands the pull request to a maintainer with the label `needs-maintainer`.
-6. **Hand over.** If the change targets speed, memory, GPU use or I/O, open a request in AIDroneMap/aidm-bench from its benchmark issue template once the review loop has ended on approval. Then clean up your worktree and end. A maintainer merges; you never do.
+6. **Hand over.** If the change targets speed, memory, GPU use or I/O, open a request in AIDroneMap/aidm-bench from its benchmark issue template once the review loop has ended on approval. Then clean up your worktree and end. A maintainer merges; you never do. A pull request that changes build inputs is merged by the nightly instead (see "The nightly" below): when its review loop has ended on approval and its dry run has passed, ask the maintainer to approve it, and say that the nightly will merge it.
 
 ## Branches, commits and pull requests
 
@@ -120,6 +120,12 @@ Link the run in the description. Limits:
 **CI code** is everything under `.github/` and `scripts/`. A dry run started on a branch runs that branch's copy of the workflows and of the scripts they run on the runner itself, with the repository's credentials: the Modal token, and a registry token that can push packages. `publish=false` does not keep those files away from the credentials. Python also puts a script's own folder first on its import path, so any file under `scripts/` can be loaded by the scripts there. A maintainer starts the dry run of any pull request that changes CI code, and the review loop hands it to a maintainer (see `REVIEW.md`). Workflows run on the runner only files from these two folders; anything else they need comes from the built image.
 
 Every bug fix needs a test that fails without it. Every new feature needs tests that cover it. Two full engine runs are not identical end to end (reconstruction varies), so a test that compares outputs byte for byte starts from a stored reconstruction and compares the stages after it; sky masks are compared with a pixel tolerance.
+
+### The nightly
+
+Every night at 00:00 UTC the release workflow runs on `master` (the nightly). It merges the open pull requests that change build inputs (`SuperBuild/`, `Dockerfile`, `gpu.Dockerfile`, `docker/`, `configure.sh`, `requirements.txt`) and are ready: approved by a code owner, every check green, and a passing dry run on their head commit. It never merges a pull request that also changes CI code. It then builds the three images with no cache, tests them on the full dataset, and writes the shared build cache from each image whose smoke test passed. A failed nightly opens an issue labelled `nightly-failed`, and nothing is merged until it is closed.
+
+The nightly and runs that publish are the only writers of the build cache. A dry run reads it and never writes it. So a dry run of a pull request that changes build inputs compiles the C++ dependencies from source (30 to 50 minutes per image), while every other dry run finds them in the cache. Do not try to warm or clear the cache from a branch.
 
 ## Rules that protect users
 
