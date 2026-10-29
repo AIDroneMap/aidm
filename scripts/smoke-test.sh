@@ -18,6 +18,8 @@
 #   scripts/smoke-test.sh api ghcr.io/aidronemap/aidm-api:2.5.0
 #
 # Environment:
+#   SMOKE_DATASET   ci (default, 32 images) or full (73 images); see
+#                   scripts/smoke-test.conf
 #   SMOKE_CACHE     where the dataset zip is downloaded once
 #                   (default: ~/.cache/aidm-smoke-test)
 #   SMOKE_OPTIONS   engine options, as command-line flags (default: --dsm)
@@ -25,9 +27,9 @@
 #   SMOKE_GPU       set to 1 to pass --gpus all to docker
 #   SMOKE_KEEP      set to 1 to keep the work folder for inspection
 #
-# Dataset: aidm-vineyard-small v1, 73 RGB images from a DJI Mavic 3M.
-#   Source:  https://huggingface.co/datasets/AIDroneMap/aidm-vineyard-small
-#   Commit:  pinned in scripts/smoke-test.conf
+# Datasets: aidm-vineyard-ci v1 (32 images) and aidm-vineyard-small v1
+#   (73 images), RGB images from a DJI Mavic 3M, pinned by URL and SHA-256 in
+#   scripts/smoke-test.conf.
 #   Licence: CC BY 4.0, Attribution: AIDroneMap, provided by ITALDRONI
 # The images are downloaded at run time and never committed to this repository.
 # Every run checks the SHA-256 of the zip and the image count before use.
@@ -66,6 +68,23 @@ MODE="$1"
 IMAGE="$2"
 [ "$MODE" = "engine" ] || [ "$MODE" = "api" ] || usage
 
+case "${SMOKE_DATASET:-ci}" in
+    ci)
+        DATASET_URL="$CI_DATASET_URL"
+        DATASET_SHA256="$CI_DATASET_SHA256"
+        DATASET_IMAGES="$CI_DATASET_IMAGES"
+        ;;
+    full)
+        DATASET_URL="$FULL_DATASET_URL"
+        DATASET_SHA256="$FULL_DATASET_SHA256"
+        DATASET_IMAGES="$FULL_DATASET_IMAGES"
+        ;;
+    *)
+        fail "SMOKE_DATASET is '$SMOKE_DATASET', expected ci or full"
+        ;;
+esac
+DATASET_ZIP="${DATASET_URL##*/}"
+
 for cmd in docker curl sha256sum python3; do
     command -v "$cmd" > /dev/null || fail "$cmd is not installed"
 done
@@ -80,14 +99,15 @@ CONTAINER=""
 # Images of the project, unpacked from the dataset zip for this run
 IMAGES_DIR="$WORK/project/images"
 
-# Download the dataset zip once, at the pinned commit. On every run, check its
-# SHA-256, unpack it into the work folder and count the images.
+# Download the dataset zip once, into a folder named after its SHA-256. On
+# every run, check its SHA-256, unpack it into the work folder and count the
+# images.
 fetch_dataset() {
-    local zip="$CACHE/$DATASET_COMMIT/$DATASET_ZIP"
+    local zip="$CACHE/$DATASET_SHA256/$DATASET_ZIP"
     if [ ! -f "$zip" ]; then
         log "Downloading $DATASET_ZIP to $(dirname "$zip")"
         mkdir -p "$(dirname "$zip")"
-        curl -fsSL --retry 3 -o "$zip.tmp" "$DATASET_REPO/resolve/$DATASET_COMMIT/$DATASET_ZIP"
+        curl -fsSL --retry 3 -o "$zip.tmp" "$DATASET_URL"
         mv "$zip.tmp" "$zip"
     fi
 

@@ -22,7 +22,7 @@ AIDM is the engine only. Scheduling, cloud provider connectors and the web inter
 | `modules/` | Shared Python library used by the stages |
 | `SuperBuild/` | C++ dependencies (OpenSfM, OpenMVS, PDAL, GDAL and others) built from pinned sources |
 | `tests/` | Unit tests (`unittest`) and their assets |
-| `scripts/` | Smoke test, dataset pin, CI helpers |
+| `scripts/` | Smoke test, dataset pins, CI helpers |
 | `Dockerfile`, `gpu.Dockerfile` | CPU and CUDA images, the only supported build targets |
 | `settings.yaml` | Default settings |
 | `docs/` | Documentation; specs go in `docs/specs/`, decisions in `docs/adr/` |
@@ -85,8 +85,8 @@ There are three tests. Each one runs a different part of the engine, and a test 
 | Test | How it runs | What it runs | What it never runs |
 | --- | --- | --- | --- |
 | Unit | `./test.sh`, or `./test.sh <name>` for `tests/test_<name>.py`. CI runs it on every push to a branch and on every pull request (`.github/workflows/tests.yml`), inside the last published CPU image with the branch copied over it. | The code that the tests under `tests/` call, on small synthetic inputs. | New build inputs: the image carries the dependencies of the last release, so a change to `requirements.txt`, `SuperBuild/` or `configure.sh` is reported there but not proved. |
-| Smoke | `scripts/smoke-test.sh`. CI runs it when the pull request carries the label `smoke` (`.github/workflows/smoke.yml`), on labelling and on every later push, on a throwaway image made from the last published CPU image plus the branch. | One pipeline run on cpu-amd64, on the dataset pinned in `scripts/smoke-test.conf`, with the options in `DEFAULT_OPTIONS` there. | New build inputs, arm64, the GPU, and every code path those options do not reach, for example split-merge (`--split`, including `merge` in `modules/orthophoto.py`) and multispectral processing. |
-| Full | The release workflow's dry run: `gh workflow run release.yml --ref <branch> -f publish=false`. It is not started by pull request events. | The three images built from source (cpu-amd64, cpu-arm64, gpu-amd64), the smoke run on each, and the GPU image on a real GPU on Modal. | The same code paths the smoke run never reaches. |
+| Smoke | `scripts/smoke-test.sh`. CI runs it when the pull request carries the label `smoke` (`.github/workflows/smoke.yml`), on labelling and on every later push, on a throwaway image made from the last published CPU image plus the branch. | One pipeline run on cpu-amd64, on the CI dataset pinned in `scripts/smoke-test.conf` (32 images), with the options in `DEFAULT_OPTIONS` there. | New build inputs, arm64, the GPU, and every code path those options do not reach, for example split-merge (`--split`, including `merge` in `modules/orthophoto.py`) and multispectral processing. |
+| Full | The release workflow's dry run: `gh workflow run release.yml --ref <branch> -f publish=false`. It is not started by pull request events. | The three images built from source (cpu-amd64, cpu-arm64, gpu-amd64), the smoke run on each, and the GPU image on a real GPU on Modal. A dry run processes the CI dataset; a run that publishes a release processes the full dataset. | The same code paths the smoke run never reaches. |
 
 ### Choosing the test depth
 
@@ -127,7 +127,7 @@ Every bug fix needs a test that fails without it. Every new feature needs tests 
 - **Claims carry numbers, and you never produce them.** A change described as faster, lighter or more accurate carries no measurement in this repository. A coding session validates (tests green, outputs identical or the documented change); it never measures. Open a benchmark request after the review loop; the benchmark process measures the merged change and writes the number here in its own pull request. Never change a dataset pin, a reference machine or a baseline.
 - **Dependencies are pinned.** Update one dependency per pull request, in `SuperBuild/` or `requirements.txt`, and say why. Base images are pinned by digest.
 - **Minimum CPU.** Both images are compiled for x86-64-v3 and armv8.2-a (`docker/gcc`, `docker/g++`, "Hardware we build for" in `README.md`). Do not add compatibility for CPUs below that minimum: no lower `-march`, no fallback code paths, no second image for old CPUs. Do not reopen this decision in pull requests.
-- **Datasets for tests on real images.** Tests that process real drone images use the dataset pinned in `scripts/smoke-test.conf`. Do not change the pin, switch a test to a smaller or lower resolution dataset, or add flags that shrink the work, to save CI time. A new pin is a maintainer's decision and needs a tag in the dataset repository. Unit tests under `tests/` keep their small synthetic inputs.
+- **Datasets for tests on real images.** `scripts/smoke-test.conf` pins two sets of one survey, and `SMOKE_DATASET` picks one. The CI set (`ci`, the default: aidm-vineyard-ci, 32 images, two full flight lines) is for the smoke test of pull requests, release dry runs and local runs. It checks that the code runs; nobody reads its outputs as photogrammetry. The full set (`full`: aidm-vineyard-small, 73 images) is for every run that publishes a release and for every benchmark. Do not change a pin, add another set, use the CI set where the full set is required, switch a test to a lower resolution dataset, or add flags that shrink the work. A new pin is a maintainer's decision and needs a new tag or release in the dataset repository. Unit tests under `tests/` keep their small synthetic inputs.
 - **Licences.** AIDM is AGPL-3.0. Keep every existing copyright notice. Do not copy code from sources with an incompatible licence, and do not add model weights whose licence forbids commercial use. When unsure, stop and ask.
 
 ## Security and privacy

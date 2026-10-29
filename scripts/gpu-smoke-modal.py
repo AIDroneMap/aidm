@@ -26,6 +26,8 @@
 #   SMOKE_MEMORY     memory for the Sandbox in MiB (default: 16384)
 #   SMOKE_TIMEOUT    Sandbox lifetime in seconds (default: 1200)
 #   SMOKE_OPTIONS    engine options (default: DEFAULT_OPTIONS in smoke-test.conf)
+#   SMOKE_DATASET    ci (default, 32 images) or full (73 images); see
+#                    scripts/smoke-test.conf
 #   SMOKE_CACHE      where the dataset zip is downloaded once
 #                    (default: ~/.cache/aidm-smoke-test)
 #
@@ -141,19 +143,38 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def fetch_dataset(config, cache, folder):
+DATASETS = ("ci", "full")
+
+
+def select_dataset(config, name):
+    """Return the URL, SHA-256 and image count of dataset name (ci or full).
+
+    Raises RuntimeError with one plain line for any other name.
+    """
+    if name not in DATASETS:
+        raise RuntimeError("SMOKE_DATASET is '%s', expected ci or full" % name)
+    prefix = name.upper() + "_DATASET_"
+    return {
+        "url": config[prefix + "URL"],
+        "sha256": config[prefix + "SHA256"],
+        "images": int(config[prefix + "IMAGES"]),
+    }
+
+
+def fetch_dataset(dataset, cache, folder):
     """Return the paths of the dataset images, unpacked into folder.
 
-    Downloads the dataset zip into cache once, at the pinned commit. On every
-    run, checks its SHA-256 and the image count before use. Raises
-    RuntimeError with one plain line on a mismatch.
+    dataset comes from select_dataset. Downloads the zip into cache once, into
+    a folder named after its SHA-256. On every run, checks its SHA-256 and the
+    image count before use. Raises RuntimeError with one plain line on a
+    mismatch.
     """
-    name = config["DATASET_ZIP"]
-    expected = int(config["DATASET_IMAGES"])
-    path = os.path.join(cache, config["DATASET_COMMIT"], name)
+    url = dataset["url"]
+    name = url.rsplit("/", 1)[-1]
+    expected = dataset["images"]
+    path = os.path.join(cache, dataset["sha256"], name)
 
     if not os.path.isfile(path):
-        url = "%s/resolve/%s/%s" % (config["DATASET_REPO"], config["DATASET_COMMIT"], name)
         log("Downloading %s to %s" % (name, os.path.dirname(path)))
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with urllib.request.urlopen(url) as response, open(path + ".tmp", "wb") as f:
@@ -162,10 +183,10 @@ def fetch_dataset(config, cache, folder):
         os.rename(path + ".tmp", path)
 
     actual = sha256(path)
-    if actual != config["DATASET_SHA256"]:
+    if actual != dataset["sha256"]:
         os.remove(path)
         raise RuntimeError("%s has SHA-256 %s, expected %s; removed it, run again to download it again"
-                           % (path, actual, config["DATASET_SHA256"]))
+                           % (path, actual, dataset["sha256"]))
 
     with zipfile.ZipFile(path) as archive:
         archive.extractall(folder)
@@ -218,7 +239,8 @@ def main():
 
     unpacked = tempfile.TemporaryDirectory(prefix="aidm-gpu-smoke.")
     try:
-        images = fetch_dataset(config, cache, unpacked.name)
+        dataset = select_dataset(config, os.environ.get("SMOKE_DATASET") or "ci")
+        images = fetch_dataset(dataset, cache, unpacked.name)
     except RuntimeError as e:
         log("FAIL: %s" % e)
         return 1
