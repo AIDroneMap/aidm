@@ -5,6 +5,22 @@
 #
 # Run it by hand to test the build without publishing release tags:
 #   gh workflow run release.yml -f publish=false
+#
+# Every night at 00:00 UTC a scheduled run (the nightly) works on master:
+#   1. nightly-merge merges the open pull requests that change build inputs
+#      (SuperBuild/, Dockerfile, gpu.Dockerfile, docker/, configure.sh,
+#      requirements.txt) and are ready: approved by a code owner, every check
+#      green, and a passing dry run on their head commit that ran the three
+#      builds and the GPU test (scripts/nightly-merge.py). Pull requests that
+#      change CI code (.github/, scripts/) are never merged here. Nothing is
+#      merged while an issue labelled nightly-failed is open.
+#   2. The images are built from master with no cache and tested on the full
+#      dataset, the GPU image on Modal too.
+#   3. Each build job whose smoke test passed writes the shared build cache.
+#   4. A failed nightly opens an issue labelled nightly-failed.
+# The build cache is written only by the nightly and by runs that publish.
+# A dry run reads it and never writes it, so the cache always matches master
+# as of the last nightly.
 # Publish again from an existing tag, for example after a failed run:
 #   gh workflow run release.yml --ref v0.1.0 -f publish=true
 #
@@ -31,6 +47,8 @@ on:
   push:
     tags:
       - "v*"
+  schedule:
+    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       publish:
@@ -41,10 +59,11 @@ on:
 permissions:
   contents: read
 
-# One publishing run per tag, never cancelled. A new dry run cancels an older one.
+# One publishing run per tag and one nightly, never cancelled. A new dry run
+# cancels an older one on the same ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ (github.event_name == 'push' || inputs.publish) && 'publish' || 'dry-run' }}-${{ github.ref }}
-  cancel-in-progress: ${{ !(github.event_name == 'push' || inputs.publish) }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'push' || inputs.publish) && 'publish' || (github.event_name == 'schedule' && 'nightly' || 'dry-run') }}-${{ github.ref }}
+  cancel-in-progress: ${{ !(github.event_name == 'push' || inputs.publish || github.event_name == 'schedule') }}
 
 env:
   IMAGE: ghcr.io/aidronemap/aidm
@@ -55,18 +74,61 @@ env:
   CACHE_IMAGE: ghcr.io/aidronemap/aidm-buildcache
 
 jobs:
+  # The nightly only. Merges the ready pull requests that change build inputs,
+  # oldest first, and hands the new master commit to the other jobs.
+  nightly-merge:
+    name: Merge ready build changes
+    if: github.event_name == 'schedule'
+    # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
+      actions: read
+      checks: read
+      statuses: read
+    outputs:
+      sha: ${{ steps.merge.outputs.sha }}
+      merged: ${{ steps.merge.outputs.merged }}
+    steps:
+      # master as of the schedule, which holds scripts/nightly-merge.py
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The rules and their tests are in scripts/nightly-merge.py and
+      # tests/test_nightly_merge.py
+      - name: Merge ready pull requests
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 -I scripts/nightly-merge.py
+
   check:
     name: Check version
+    needs: nightly-merge
+    # Runs when nightly-merge is skipped (every run but the nightly) or passed
+    if: ${{ !cancelled() && needs.nightly-merge.result != 'failure' }}
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
       publish: ${{ steps.version.outputs.publish }}
+      # publish, nightly or dry-run
+      mode: ${{ steps.version.outputs.mode }}
+      # The commit every job builds: master after the merges on the nightly,
+      # the commit that started the run otherwise
+      ref: ${{ steps.version.outputs.ref }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.nightly-merge.outputs.sha || github.sha }}
           persist-credentials: false
 
       - name: Read VERSION and compare it with the tag
@@ -95,13 +157,27 @@ jobs:
             exit 1
           fi
 
-          echo "Version $version, publish $publish"
+          mode=dry-run
+          if [ "$publish" = "true" ]; then
+            mode=publish
+          elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            mode=nightly
+          fi
+
+          echo "Version $version, mode $mode, commit $(git rev-parse HEAD)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   build:
     name: ${{ matrix.name }}
     needs: check
+    # check depends on nightly-merge, which is skipped on every run but the
+    # nightly, and a skipped job earlier in the chain skips every job after
+    # it unless the job says when to run. So every job from here on states
+    # it, and a run whose builds were skipped can never pass.
+    if: ${{ !cancelled() && needs.check.result == 'success' }}
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ${{ matrix.runner }}
     # About 1.5 times the measured job time with a full build of the C++
@@ -139,15 +215,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.check.outputs.ref }}
           persist-credentials: false
 
-      # Only a run that publishes frees disk space. The hosted runners have
-      # 145 GB disks with about 86 GB free; a full build of the GPU image with
-      # no cache grew the disk by about 49 GB (run 40836313546), so a dry run
-      # fits without it and saves 1 to 2 minutes per job. The Disk usage
-      # step at the end of the job shows what a run used.
+      # Only a run that publishes and the nightly free disk space. The hosted
+      # runners have 145 GB disks with about 86 GB free; a full build of the
+      # GPU image with no cache grew the disk by about 49 GB (run 40836313546),
+      # so a dry run fits without it and saves 1 to 2 minutes per job. The
+      # Disk usage step at the end of the job shows what a run used.
       - name: Free disk space
-        if: needs.check.outputs.publish == 'true'
+        if: needs.check.outputs.mode != 'dry-run'
         run: |
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
@@ -176,13 +253,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          cleanup: ${{ needs.check.outputs.publish == 'true' }}
+          cleanup: ${{ needs.check.outputs.mode != 'dry-run' }}
           buildkitd-config-inline: |
             [worker.oci]
               max-parallelism = 1
 
-      # Every run reads and writes the build cache. The GPU image is also
-      # pushed on every run, for gpu-test.
+      # Every run but the nightly reads the build cache; only the nightly and
+      # runs that publish write it, after the smoke test. The GPU image is
+      # also pushed on every run, for gpu-test.
       - name: Log in to ghcr.io
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -190,7 +268,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # mode=max also caches the builder stage, where the SuperBuild layer is
+      # The nightly builds with no cache, so every night proves that master
+      # still builds from its sources.
       - name: Build
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -201,18 +280,32 @@ jobs:
           provenance: false
           load: true
           tags: aidm-smoke:${{ matrix.name }}
+          no-cache: ${{ needs.check.outputs.mode == 'nightly' }}
           cache-from: type=registry,ref=${{ env.CACHE_IMAGE }}:${{ matrix.name }}
-          cache-to: type=registry,ref=${{ env.CACHE_IMAGE }}:${{ matrix.name }},mode=max,image-manifest=true,oci-mediatypes=true
 
       # About 1.5 times the slowest measured smoke test on this runner, on the
-      # full set. A run that publishes processes the full set (73 images); a
-      # dry run processes the CI set (32 images). See scripts/smoke-test.conf.
+      # full set. A dry run processes the CI set (32 images); the nightly and
+      # a run that publishes process the full set (73 images). See
+      # scripts/smoke-test.conf.
       - name: Smoke test
         timeout-minutes: ${{ matrix.smoke-timeout }}
         run: scripts/smoke-test.sh engine "aidm-smoke:$NAME"
         env:
           NAME: ${{ matrix.name }}
-          SMOKE_DATASET: ${{ needs.check.outputs.publish == 'true' && 'full' || 'ci' }}
+          SMOKE_DATASET: ${{ needs.check.outputs.mode == 'dry-run' && 'ci' || 'full' }}
+
+      # Only after the smoke test passed. Same inputs as the tested build, so
+      # every step comes from this runner's local build cache; mode=max also
+      # caches the builder stage, where the SuperBuild layer is.
+      - name: Write the build cache
+        if: needs.check.outputs.mode != 'dry-run'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          cache-to: type=registry,ref=${{ env.CACHE_IMAGE }}:${{ matrix.name }},mode=max,image-manifest=true,oci-mediatypes=true
 
       # Same inputs as the tested build, so every step comes from this runner's
       # local build cache.
@@ -263,6 +356,7 @@ jobs:
   gpu-test:
     name: GPU test on Modal
     needs: [check, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
     # About 1.5 times the measured 16 to 18 minutes, Modal image build included
@@ -275,6 +369,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.check.outputs.ref }}
           persist-credentials: false
 
       - name: Install the Modal client
@@ -284,7 +379,7 @@ jobs:
 
       # The Sandbox lives at most 20 minutes (SMOKE_TIMEOUT, about 1.5 times the
       # measured 804 s on the full set) and is not retried. Same dataset rule as
-      # the smoke test: the full set when publishing, the CI set otherwise.
+      # the smoke test: the CI set on a dry run, the full set otherwise.
       # Builder 2025.06 adds nothing to a registry image, so the engine keeps
       # its own Python.
       - name: Run the engine on a GPU
@@ -297,14 +392,14 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
           SMOKE_GPU: T4
           SMOKE_TIMEOUT: "1200"
-          SMOKE_DATASET: ${{ needs.check.outputs.publish == 'true' && 'full' || 'ci' }}
+          SMOKE_DATASET: ${{ needs.check.outputs.mode == 'dry-run' && 'ci' || 'full' }}
           GPU_IMAGE: ${{ needs.build.outputs.gpu-image }}
         run: '"$RUNNER_TEMP/modal/bin/python" scripts/gpu-smoke-modal.py "$GPU_IMAGE"'
 
   manifest:
     name: Tag images
     needs: [check, build, gpu-test]
-    if: needs.check.outputs.publish == 'true'
+    if: ${{ !cancelled() && needs.gpu-test.result == 'success' && needs.check.outputs.publish == 'true' }}
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -353,7 +448,7 @@ jobs:
   release:
     name: Draft release
     needs: [check, manifest]
-    if: github.event_name == 'push'
+    if: ${{ !cancelled() && needs.manifest.result == 'success' && github.event_name == 'push' }}
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -409,3 +504,36 @@ jobs:
           else
             gh release create "$tag" --draft --verify-tag --title "AIDM $VERSION" --notes-file notes.md
           fi
+
+  # The nightly only: opens an issue when any job failed. While it is open,
+  # nightly-merge merges nothing.
+  nightly-report:
+    name: Report a failed nightly
+    needs: [nightly-merge, check, build, gpu-test]
+    if: github.event_name == 'schedule' && failure()
+    # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MERGED: ${{ needs.nightly-merge.outputs.merged }}
+          SHA: ${{ needs.nightly-merge.outputs.sha }}
+        run: |
+          gh label create nightly-failed --color B60205 \
+            --description "The nightly build of master failed; the nightly merges nothing until this is closed" \
+            2> /dev/null || true
+          {
+            echo "The nightly build of master failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo "Commit built: ${SHA:-unknown}"
+            echo "Pull requests merged tonight: ${MERGED:-none}"
+            echo
+            echo "The build cache was not written by the jobs that failed. The nightly merges nothing until this issue is closed. Close it once master builds again."
+          } > body.md
+          gh issue create --title "Nightly build failed on $(date -u +%Y-%m-%d)" \
+            --label nightly-failed --body-file body.md
