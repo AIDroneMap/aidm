@@ -108,7 +108,7 @@ When the declared depth is `full`, start the dry run yourself, without asking, i
 - the reason for `full` is one of the cases in "Choosing the test depth";
 - the pull request changes no CI code (see below);
 - the unit tests are green on the head commit;
-- no other dry run of the release workflow is queued or running in this repository (`gh run list --workflow release.yml --status queued` and `--status in_progress`). If one is, wait until it ends;
+- fewer than three dry runs of the release workflow are queued or running in this repository (`gh run list --workflow release.yml --status queued` and `--status in_progress`). If three are, wait until one ends. A dry run takes four jobs, and the organisation's runners are shared by all its repositories;
 - you start it on your own branch with `publish=false`: `gh workflow run release.yml --ref <branch> -f publish=false`. Never start it on `master` or a tag, never with `publish=true`, and never push a tag.
 
 Link the run in the description. Limits:
