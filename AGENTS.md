@@ -106,7 +106,7 @@ Do not start a test that does not run the changed code: it costs runner time and
 When the declared depth is `full`, start the dry run yourself, without asking, if all of these hold:
 
 - the reason for `full` is one of the cases in "Choosing the test depth";
-- the pull request changes nothing under `.github/`. A dry run started on a branch runs that branch's copy of the workflow, with the repository's secrets, so a maintainer starts the dry run of any pull request that changes a workflow;
+- the pull request changes no CI code (see below);
 - the unit tests are green on the head commit;
 - no other dry run of the release workflow is queued or running in this repository (`gh run list --workflow release.yml --status queued` and `--status in_progress`). If one is, wait until it ends;
 - you start it on your own branch with `publish=false`: `gh workflow run release.yml --ref <branch> -f publish=false`. Never start it on `master` or a tag, never with `publish=true`, and never push a tag.
@@ -116,6 +116,8 @@ Link the run in the description. Limits:
 - One run per head commit. Push your fixes first, then start one run.
 - At most two runs per pull request. A third one needs a maintainer.
 - Never rerun a failed run, or start a new one on the same commit, to get a green result. Report the failure in the pull request with the link. If it looks unrelated to the change, for example a known intermittent crash with an open issue, name that issue; the reviewer or a maintainer decides.
+
+**CI code** is everything under `.github/` and `scripts/`. A dry run started on a branch runs that branch's copy of the workflows and of the scripts they run on the runner itself, with the repository's credentials: the Modal token, and a registry token that can push packages. `publish=false` does not keep those files away from the credentials. Python also puts a script's own folder first on its import path, so any file under `scripts/` can be loaded by the scripts there. A maintainer starts the dry run of any pull request that changes CI code, and the review loop hands it to a maintainer (see `REVIEW.md`). Workflows run on the runner only files from these two folders; anything else they need comes from the built image.
 
 Every bug fix needs a test that fails without it. Every new feature needs tests that cover it. Two full engine runs are not identical end to end (reconstruction varies), so a test that compares outputs byte for byte starts from a stored reconstruction and compares the stages after it; sky masks are compared with a pixel tolerance.
 
