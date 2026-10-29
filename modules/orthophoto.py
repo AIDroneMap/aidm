@@ -349,6 +349,27 @@ def feather_raster(input_raster, output_raster, blend_distance=20):
 
         return output_raster
 
+def block_window(raster, left, bottom, right, top):
+    """The window of raster that merge reads for the block with these bounds."""
+    return tuple(zip(rowcol(
+            raster.transform, left, top, op=round
+        ), rowcol(
+            raster.transform, right, bottom, op=round
+        )))
+
+def window_overlaps(raster, window):
+    """True if a boundless read of window can return a nonzero pixel.
+
+    A window outside the raster reads as nodata. When nodata is unset or 0
+    that is zero alpha, which no merge pass writes. Any other nodata value
+    reads as nonzero, so the raster is kept.
+    """
+    if raster.nodata not in (None, 0):
+        return True
+    (row_start, row_stop), (col_start, col_stop) = window
+    return row_start < raster.height and row_stop > 0 and \
+           col_start < raster.width and col_stop > 0
+
 def merge(input_ortho_and_ortho_cuts, output_orthophoto, orthophoto_vars={}, max_workers=1):
     """
     Based on https://github.com/mapbox/rio-merge-rgba/
@@ -491,19 +512,26 @@ def merge(input_ortho_and_ortho_cuts, output_orthophoto, orthophoto_vars={}, max
 
                 local_sources = get_sources()
 
+                # Keep only the rasters that can add a pixel to this block.
+                # Keep their original order, because later sources overwrite
+                # earlier ones.
+                orthos = []
+                cuts = []
+                for src, cut in local_sources:
+                    src_window = block_window(src, left, bottom, right, top)
+                    if window_overlaps(src, src_window):
+                        orthos.append((src, src_window))
+                    cut_window = block_window(cut, left, bottom, right, top)
+                    if window_overlaps(cut, cut_window):
+                        cuts.append((cut, cut_window))
+
                 dst_rows, dst_cols = (dst_window.height, dst_window.width)
                 dst_shape = (dst_count, dst_rows, dst_cols)
 
                 dstarr = np.zeros(dst_shape, dtype=dtype)
 
                 # First pass, write all rasters naively without blending
-                for src, _ in local_sources:
-                    src_window = tuple(zip(rowcol(
-                            src.transform, left, top, op=round
-                        ), rowcol(
-                            src.transform, right, bottom, op=round
-                        )))
-
+                for src, src_window in orthos:
                     temp = np.zeros(dst_shape, dtype=dtype)
                     temp = src.read(
                         out=temp, window=src_window, boundless=True, masked=False
@@ -520,13 +548,7 @@ def merge(input_ortho_and_ortho_cuts, output_orthophoto, orthophoto_vars={}, max
                         break
 
                 # Blend every feathered source, even where the block is full.
-                for src, _ in local_sources:
-                    src_window = tuple(zip(rowcol(
-                            src.transform, left, top, op=round
-                        ), rowcol(
-                            src.transform, right, bottom, op=round
-                        )))
-
+                for src, src_window in orthos:
                     temp = np.zeros(dst_shape, dtype=dtype)
                     temp = src.read(
                         out=temp, window=src_window, boundless=True, masked=False
@@ -540,16 +562,10 @@ def merge(input_ortho_and_ortho_cuts, output_orthophoto, orthophoto_vars={}, max
 
                 # Third pass, write cut rasters
                 # blending the cutlines
-                for _, cut in local_sources:
-                    src_window = tuple(zip(rowcol(
-                            cut.transform, left, top, op=round
-                        ), rowcol(
-                            cut.transform, right, bottom, op=round
-                        )))
-
+                for cut, cut_window in cuts:
                     temp = np.zeros(dst_shape, dtype=dtype)
                     temp = cut.read(
-                        out=temp, window=src_window, boundless=True, masked=False
+                        out=temp, window=cut_window, boundless=True, masked=False
                     )
 
                     # For each band, average alpha values between
