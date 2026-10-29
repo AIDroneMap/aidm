@@ -213,6 +213,11 @@ jobs:
   build:
     name: ${{ matrix.name }}
     needs: check
+    # check depends on nightly-merge, which is skipped on every run but the
+    # nightly, and a skipped job earlier in the chain skips every job after
+    # it unless the job says when to run. So every job from here on states
+    # it, and a run whose builds were skipped can never pass.
+    if: ${{ !cancelled() && needs.check.result == 'success' }}
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ${{ matrix.runner }}
     # About 1.5 times the measured job time with a full build of the C++
@@ -391,6 +396,7 @@ jobs:
   gpu-test:
     name: GPU test on Modal
     needs: [check, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
     # About 1.5 times the measured 16 to 18 minutes, Modal image build included
@@ -433,7 +439,7 @@ jobs:
   manifest:
     name: Tag images
     needs: [check, build, gpu-test]
-    if: needs.check.outputs.publish == 'true'
+    if: ${{ !cancelled() && needs.gpu-test.result == 'success' && needs.check.outputs.publish == 'true' }}
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -482,7 +488,7 @@ jobs:
   release:
     name: Draft release
     needs: [check, manifest]
-    if: github.event_name == 'push'
+    if: ${{ !cancelled() && needs.manifest.result == 'success' && github.event_name == 'push' }}
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
     timeout-minutes: 10
