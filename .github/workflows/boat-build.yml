@@ -1,0 +1,71 @@
+# The CPU image built from scratch on a boat.dev sandbox, then the smoke test.
+#
+# For a change to a build input (Dockerfile, SuperBuild/, requirements.txt,
+# configure.sh, docker/) that does not touch the instruction sets: one
+# no-cache build of Dockerfile for linux/amd64 and scripts/smoke-test.sh on
+# the image, in about 25 minutes on a boat.dev "large" sandbox (8 vCPU,
+# 16 GB, AMD Zen 5). No build cache is read or written and nothing is pushed.
+# It does not replace the full test: arm64 and the GPU image are built only
+# by the release workflow's dry run.
+#
+# Trigger: add the label "boat-build" to a pull request from this repository,
+# or start it by hand on a branch. Every push to the pull request while the
+# label is on runs it again. Pull requests from forks never run it.
+#
+# The runner only drives boat.dev's API (.github/scripts/boat_build.py); the
+# build and the smoke test run on the sandbox. BOAT_API_KEY is a repository
+# secret.
+
+name: Boat build
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+  workflow_dispatch:
+
+concurrency:
+  group: boat-build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: No-cache build and smoke test, cpu-amd64 on boat.dev
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.pull_request.labels.*.name, 'boat-build') &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    # Runner images are pinned on purpose. Moving to a new image is its own PR.
+    runs-on: ubuntu-24.04
+    # About 1.5 times the measured build and smoke time on a large sandbox
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the boat.dev SDK
+        run: |
+          python3 -m venv "$RUNNER_TEMP/boat"
+          "$RUNNER_TEMP/boat/bin/pip" install --quiet boat-sdk==1.13.0
+
+      - name: Build and smoke test on boat.dev
+        env:
+          BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          "$RUNNER_TEMP/boat/bin/python" .github/scripts/boat_build.py \
+            --repository "$GITHUB_REPOSITORY" --commit "$COMMIT" \
+            --machine-type large --out "$RUNNER_TEMP/boat-build"
+
+      - name: Upload the build and smoke logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: boat-build
+          path: ${{ runner.temp }}/boat-build/
+          if-no-files-found: ignore
+          retention-days: 7
