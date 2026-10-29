@@ -195,12 +195,15 @@ jobs:
           cache-from: type=registry,ref=${{ env.CACHE_IMAGE }}:${{ matrix.name }}
           cache-to: type=registry,ref=${{ env.CACHE_IMAGE }}:${{ matrix.name }},mode=max,image-manifest=true,oci-mediatypes=true
 
-      # About 1.5 times the slowest measured smoke test on this runner
+      # About 1.5 times the slowest measured smoke test on this runner, on the
+      # full set. A run that publishes processes the full set (73 images); a
+      # dry run processes the CI set (32 images). See scripts/smoke-test.conf.
       - name: Smoke test
         timeout-minutes: ${{ matrix.smoke-timeout }}
         run: scripts/smoke-test.sh engine "aidm-smoke:$NAME"
         env:
           NAME: ${{ matrix.name }}
+          SMOKE_DATASET: ${{ needs.check.outputs.publish == 'true' && 'full' || 'ci' }}
 
       # Same inputs as the tested build, so every step comes from this runner's
       # local build cache.
@@ -250,7 +253,7 @@ jobs:
   # Runs the GPU image on a real GPU on Modal. See the comment at the top.
   gpu-test:
     name: GPU test on Modal
-    needs: build
+    needs: [check, build]
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
     # About 1.5 times the measured 16 to 18 minutes, Modal image build included
@@ -271,7 +274,8 @@ jobs:
           "$RUNNER_TEMP/modal/bin/pip" install --quiet modal==1.6.2
 
       # The Sandbox lives at most 20 minutes (SMOKE_TIMEOUT, about 1.5 times the
-      # measured 804 s) and is not retried.
+      # measured 804 s on the full set) and is not retried. Same dataset rule as
+      # the smoke test: the full set when publishing, the CI set otherwise.
       # Builder 2025.06 adds nothing to a registry image, so the engine keeps
       # its own Python.
       - name: Run the engine on a GPU
@@ -284,6 +288,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
           SMOKE_GPU: T4
           SMOKE_TIMEOUT: "1200"
+          SMOKE_DATASET: ${{ needs.check.outputs.publish == 'true' && 'full' || 'ci' }}
           GPU_IMAGE: ${{ needs.build.outputs.gpu-image }}
         run: '"$RUNNER_TEMP/modal/bin/python" scripts/gpu-smoke-modal.py "$GPU_IMAGE"'
 
