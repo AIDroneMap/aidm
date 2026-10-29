@@ -21,24 +21,32 @@ CPU_DENSIFY = """[INFO]    running "/code/SuperBuild/install/bin/OpenMVS/Densify
 """
 
 
+DATASET_KEYS = ["CI_DATASET_URL", "CI_DATASET_SHA256", "CI_DATASET_IMAGES",
+                "FULL_DATASET_URL", "FULL_DATASET_SHA256", "FULL_DATASET_IMAGES"]
+
+
 class TestReadConfig(unittest.TestCase):
     def test_matches_bash(self):
+        keys = DATASET_KEYS + ["DEFAULT_OPTIONS", "OUTPUTS"]
         out = subprocess.run(
             ["bash", "-c",
-             'source scripts/smoke-test.conf; printf "%s\\n" "$DATASET_REPO" '
-             '"$DATASET_COMMIT" "$DATASET_ZIP" "$DATASET_SHA256" "$DATASET_IMAGES" '
-             '"$DEFAULT_OPTIONS" "$OUTPUTS"'],
+             'source scripts/smoke-test.conf; printf "%s\\n" '
+             + " ".join('"$%s"' % k for k in keys)],
             cwd=ROOT, capture_output=True, text=True, check=True).stdout.splitlines()
         config = gpu_smoke.read_config(CONF)
-        keys = ["DATASET_REPO", "DATASET_COMMIT", "DATASET_ZIP", "DATASET_SHA256",
-                "DATASET_IMAGES", "DEFAULT_OPTIONS", "OUTPUTS"]
         self.assertEqual([config[k] for k in keys], out)
         self.assertEqual(len(config["OUTPUTS"].split()), 4)
 
-    def test_pins_look_like_hashes(self):
+    def test_pins(self):
         config = gpu_smoke.read_config(CONF)
-        self.assertRegex(config["DATASET_SHA256"], r"^[0-9a-f]{64}$")
-        self.assertRegex(config["DATASET_COMMIT"], r"^[0-9a-f]{40}$")
+        for name in gpu_smoke.DATASETS:
+            with self.subTest(dataset=name):
+                prefix = name.upper() + "_DATASET_"
+                self.assertRegex(config[prefix + "SHA256"], r"^[0-9a-f]{64}$")
+                self.assertRegex(config[prefix + "URL"], r"^https://\S+/[^/]+\.zip$")
+                self.assertGreater(int(config[prefix + "IMAGES"]), 0)
+        # The full set is the 73-image survey that releases and benchmarks use
+        self.assertEqual(config["FULL_DATASET_IMAGES"], "73")
 
     def test_malformed_line(self):
         with tempfile.TemporaryDirectory() as d:
@@ -49,8 +57,26 @@ class TestReadConfig(unittest.TestCase):
                 gpu_smoke.read_config(path)
 
 
+class TestSelectDataset(unittest.TestCase):
+    def setUp(self):
+        self.config = gpu_smoke.read_config(CONF)
+
+    def test_ci_and_full(self):
+        for name in ("ci", "full"):
+            with self.subTest(dataset=name):
+                prefix = name.upper() + "_DATASET_"
+                self.assertEqual(gpu_smoke.select_dataset(self.config, name), {
+                    "url": self.config[prefix + "URL"],
+                    "sha256": self.config[prefix + "SHA256"],
+                    "images": int(self.config[prefix + "IMAGES"]),
+                })
+
+    def test_unknown_name(self):
+        with self.assertRaisesRegex(RuntimeError, "expected ci or full"):
+            gpu_smoke.select_dataset(self.config, "small")
+
+
 class TestFetchDataset(unittest.TestCase):
-    COMMIT = "0" * 40
     ZIP = "set.zip"
 
     def setUp(self):
@@ -60,39 +86,45 @@ class TestFetchDataset(unittest.TestCase):
         self.folder = os.path.join(self.tmp.name, "images")
         os.makedirs(self.folder)
 
-    def make_config(self, names, sha256=None):
-        """Write a zip of fake images into the cache and return a matching config."""
-        path = os.path.join(self.cache, self.COMMIT, self.ZIP)
+    def make_dataset(self, names, sha256=None):
+        """Write a zip of fake images into the cache and return a matching dataset.
+
+        The zip goes where fetch_dataset looks for it, so nothing is downloaded.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            staged = os.path.join(d, self.ZIP)
+            with zipfile.ZipFile(staged, "w") as z:
+                for name in names:
+                    z.writestr(name, b"not an image")
+            with open(staged, "rb") as f:
+                data = f.read()
+        digest = sha256 or hashlib.sha256(data).hexdigest()
+        path = os.path.join(self.cache, digest, self.ZIP)
         os.makedirs(os.path.dirname(path))
-        with zipfile.ZipFile(path, "w") as z:
-            for name in names:
-                z.writestr(name, b"not an image")
-        with open(path, "rb") as f:
-            digest = hashlib.sha256(f.read()).hexdigest()
+        with open(path, "wb") as f:
+            f.write(data)
         return path, {
-            "DATASET_REPO": "https://example.invalid/never-used",
-            "DATASET_COMMIT": self.COMMIT,
-            "DATASET_ZIP": self.ZIP,
-            "DATASET_IMAGES": "3",
-            "DATASET_SHA256": sha256 or digest,
+            "url": "https://example.invalid/never-used/" + self.ZIP,
+            "sha256": digest,
+            "images": 3,
         }
 
     def test_good_zip(self):
-        _, config = self.make_config(["a.JPG", "b.jpg", "c.jpg"])
-        paths = gpu_smoke.fetch_dataset(config, self.cache, self.folder)
+        _, dataset = self.make_dataset(["a.JPG", "b.jpg", "c.jpg"])
+        paths = gpu_smoke.fetch_dataset(dataset, self.cache, self.folder)
         self.assertEqual(paths, [os.path.join(self.folder, n) for n in ("a.JPG", "b.jpg", "c.jpg")])
         self.assertTrue(all(os.path.isfile(p) for p in paths))
 
     def test_wrong_sha256(self):
-        path, config = self.make_config(["a.JPG", "b.jpg", "c.jpg"], sha256="f" * 64)
+        path, dataset = self.make_dataset(["a.JPG", "b.jpg", "c.jpg"], sha256="f" * 64)
         with self.assertRaisesRegex(RuntimeError, "SHA-256"):
-            gpu_smoke.fetch_dataset(config, self.cache, self.folder)
+            gpu_smoke.fetch_dataset(dataset, self.cache, self.folder)
         self.assertFalse(os.path.exists(path))
 
     def test_wrong_image_count(self):
-        _, config = self.make_config(["a.JPG", "b.jpg"])
+        _, dataset = self.make_dataset(["a.JPG", "b.jpg"])
         with self.assertRaisesRegex(RuntimeError, "expected 3 images"):
-            gpu_smoke.fetch_dataset(config, self.cache, self.folder)
+            gpu_smoke.fetch_dataset(dataset, self.cache, self.folder)
 
 
 QUERY_OUTPUT = "Tesla T4, 610.57.04, 15360 MiB\n"
