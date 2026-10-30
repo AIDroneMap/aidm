@@ -39,6 +39,12 @@ defaults:
 jobs:
   lint:
     name: Writing rules
+    # Only pull requests from a branch of this repository. The checks enforce
+    # the rules AGENTS.md sets for agents, and agents work on branches of this
+    # repository. The contributing guide does not ask fork contributors for the
+    # "Test depth:" line or the disclosure footnote. REVIEW.md blocks a trigger
+    # for events from forks. A pull request from a fork skips this job.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     # Runner images are pinned on purpose. Moving to a new image is its own PR.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
