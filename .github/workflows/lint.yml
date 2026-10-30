@@ -151,6 +151,6 @@ jobs:
             fi
           done < <(git rev-list --reverse "$BASE_SHA..$HEAD_SHA")
           if [ "$status" -eq 0 ]; then
-            echo "All $count commits carry a sign-off with their author's email."
+            echo "Every commit carries a sign-off with its author's email ($count checked)."
           fi
           exit "$status"
