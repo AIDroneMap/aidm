@@ -46,8 +46,12 @@ class ReadCounter:
         return getattr(self._dataset, name)
 
 
-def write_raster(path, rgb, alpha):
-    """Write an RGBA GeoTIFF with one RGB color wherever alpha is nonzero."""
+def write_raster(path, rgb, alpha, origin=(0, 0), nodata=None):
+    """Write an RGBA GeoTIFF with one RGB color wherever alpha is nonzero.
+
+    origin is the (column, row) of the top left corner on the 1 m grid shared
+    by all test rasters. It may be fractional.
+    """
     height, width = alpha.shape
     data = np.zeros((4, height, width), dtype=np.uint8)
     for b in range(3):
@@ -62,7 +66,8 @@ def write_raster(path, rgb, alpha):
         count=4,
         dtype="uint8",
         crs="EPSG:32615",
-        transform=from_origin(500000, 4000000, 1, 1),
+        transform=from_origin(500000 + origin[0], 4000000 - origin[1], 1, 1),
+        nodata=nodata,
     ) as dst:
         dst.write(data)
         dst.colorinterp = [
@@ -83,11 +88,13 @@ class TestOrthophotoMerge(unittest.TestCase):
     def path(self, name):
         return os.path.join(self.tmp, name)
 
-    def make_input(self, name, rgb, alpha):
+    def make_input(self, name, rgb, alpha, origin=(0, 0), nodata=None, cut_alpha=None):
         ortho = self.path(name + ".tif")
         cut = self.path(name + "_cut.tif")
-        write_raster(ortho, rgb, alpha)
-        write_raster(cut, (0, 0, 0), np.zeros_like(alpha))
+        write_raster(ortho, rgb, alpha, origin, nodata)
+        if cut_alpha is None:
+            cut_alpha = np.zeros_like(alpha)
+        write_raster(cut, (255 - rgb[0], 255 - rgb[1], 255 - rgb[2]), cut_alpha, origin, nodata)
         return ortho, cut
 
     def fake_open(self, path, mode="r", *args, **kwargs):
@@ -96,8 +103,8 @@ class TestOrthophotoMerge(unittest.TestCase):
             return ReadCounter(dataset, os.fspath(path), self.reads, self.lock)
         return dataset
 
-    def run_merge(self, inputs, max_workers=1):
-        out = self.path("merged.tif")
+    def run_merge(self, inputs, max_workers=1, name="merged.tif"):
+        out = self.path(name)
         with mock.patch("modules.orthophoto.rasterio.open", side_effect=self.fake_open):
             result = orthophoto.merge(
                 inputs, out, orthophoto_vars={"BLOCKXSIZE": BLOCK, "BLOCKYSIZE": BLOCK},
@@ -109,6 +116,21 @@ class TestOrthophotoMerge(unittest.TestCase):
 
     def reads_of(self, path):
         return [w for p, w in self.reads if p == path]
+
+    def merged_bytes(self, inputs, read_every_source=False):
+        """Merge serially and return the output file bytes.
+
+        With read_every_source, every raster counts as overlapping every
+        block, so merge reads all of them in all passes as master did.
+        """
+        name = "every.tif" if read_every_source else "merged.tif"
+        if read_every_source:
+            with mock.patch("modules.orthophoto.window_overlaps", return_value=True):
+                self.run_merge(inputs, name=name)
+        else:
+            self.run_merge(inputs, name=name)
+        with open(self.path(name), "rb") as merged:
+            return merged.read()
 
     def test_feather_blends_later_source_when_coverage_equals_block_width(self):
         for height, width in ((SIZE, SIZE), (19, 21), (1, 21)):
@@ -225,6 +247,121 @@ class TestOrthophotoMerge(unittest.TestCase):
             self.assertTrue(np.all(out[band][:, SIZE // 2 :] == right), "right band %d" % band)
         self.assertTrue(np.all(out[3] == 255))
 
+
+    def test_source_is_not_read_for_blocks_it_does_not_overlap(self):
+        opaque = np.full((SIZE, SIZE), 255, dtype=np.uint8)
+        o1, c1 = self.make_input("o1", (200, 100, 50), opaque)
+        corner = np.full((BLOCK, BLOCK), 128, dtype=np.uint8)
+        o2, c2 = self.make_input(
+            "o2", (40, 80, 120), corner, origin=(SIZE - BLOCK, SIZE - BLOCK), cut_alpha=corner
+        )
+
+        out = self.run_merge([(o1, c1), (o2, c2)])
+
+        # Source 2 covers only the bottom right block. Source 1 fills every
+        # block in the first pass, so source 2 is read once there by the
+        # second pass, and its cut once by the third.
+        whole = ((0, BLOCK), (0, BLOCK))
+        self.assertEqual(self.reads_of(o2), [whole])
+        self.assertEqual(self.reads_of(c2), [whole])
+        self.assertEqual(len(self.reads_of(o1)), 2 * BLOCKS)
+        self.assertEqual(len(self.reads_of(c1)), BLOCKS)
+
+        # Only the bottom right block changes. Source 2 blends over source 1,
+        # then its cut, which has the inverted color, blends over that.
+        def blend(top, alpha, below):
+            return int(alpha / 255.0 * top + (1 - alpha / 255.0) * below)
+
+        for band, (c1_value, c2_value) in enumerate(zip((200, 100, 50), (40, 80, 120))):
+            corner_value = blend(255 - c2_value, 128, blend(c2_value, 128, c1_value))
+            expected = np.full((SIZE, SIZE), c1_value, dtype=np.uint8)
+            expected[SIZE - BLOCK :, SIZE - BLOCK :] = corner_value
+            np.testing.assert_array_equal(out[band], expected)
+        np.testing.assert_array_equal(out[3], opaque)
+
+    def test_source_touching_block_edge_is_read_where_it_adds_pixels(self):
+        opaque = np.full((SIZE, SIZE), 255, dtype=np.uint8)
+        column = np.full((SIZE, BLOCK), 128, dtype=np.uint8)
+        # Source 2 is one block wide. Its left edge sits on a block edge, or
+        # 0.6 px right or left of it. Merge rounds each window to whole
+        # pixels, so a 0.6 px overhang adds one column to the next block.
+        # Each case lists the column ranges merge reads from source 2.
+        # Blocks whose window falls outside its 16 columns are not read.
+        for col, windows in (
+            (16, {(0, 16)}),
+            (16.6, {(-1, 15), (15, 31)}),
+            (15.4, {(-15, 1), (1, 17)}),
+        ):
+            with self.subTest(col=col):
+                self.tmp = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+                first = self.make_input("o1", (200, 100, 50), opaque)
+                second = self.make_input(
+                    "o2", (40, 80, 120), column, origin=(col, 0), cut_alpha=column
+                )
+                inputs = [first, second]
+
+                self.reads.clear()
+                merged = self.merged_bytes(inputs)
+
+                for raster in second:
+                    reads = self.reads_of(raster)
+                    self.assertEqual({cols for _, cols in reads}, windows, raster)
+                    # Each window is read once per block row, by the second
+                    # pass for the orthophoto and by the third for the cut.
+                    self.assertEqual(len(reads), len(windows) * SIZE // BLOCK, raster)
+
+                self.assertEqual(merged, self.merged_bytes(inputs, read_every_source=True))
+
+    def test_raster_with_nonzero_nodata_is_read_for_every_block(self):
+        opaque = np.full((SIZE, SIZE), 255, dtype=np.uint8)
+        first = self.make_input("o1", (200, 100, 50), opaque)
+        corner = np.full((BLOCK, BLOCK), 128, dtype=np.uint8)
+        second = self.make_input("o2", (40, 80, 120), corner, nodata=255, cut_alpha=corner)
+        inputs = [first, second]
+
+        merged = self.merged_bytes(inputs)
+
+        # Outside its bounds the raster reads as 255 in every band, alpha
+        # included, so it adds pixels to every block and is never skipped.
+        self.assertEqual(len(self.reads_of(second[0])), BLOCKS)
+        self.assertEqual(len(self.reads_of(second[1])), BLOCKS)
+        self.assertEqual(merged, self.merged_bytes(inputs, read_every_source=True))
+
+    def test_split_merge_is_byte_identical_to_master(self):
+        # Four submodels on a 96 x 80 px output, as a split run makes them:
+        # each covers part of the output, neighbours overlap, and their
+        # edges fall on, near and between block edges. Each cut covers less
+        # than its orthophoto, with its own bounds.
+        layout = (
+            ("a", (200, 100, 50), (0, 0), (40, 48)),
+            ("b", (40, 80, 120), (31.6, 0), (64.4, 40)),
+            ("c", (80, 160, 20), (0, 37.5), (52, 42.5)),
+            ("d", (150, 30, 220), (48, 32), (48, 48)),
+        )
+        inputs = []
+        for name, rgb, origin, (width, height) in layout:
+            width, height = int(width), int(height)
+            alpha = np.zeros((height, width), dtype=np.uint8)
+            alpha[2 : height - 2, 2 : width - 2] = 255
+            alpha[2 : height - 2, 2:8] = 96
+            ortho = self.path(name + ".tif")
+            write_raster(ortho, rgb, alpha, origin)
+            cut_width = width // 2
+            cut_alpha = np.zeros((height, cut_width), dtype=np.uint8)
+            cut_alpha[:, cut_width - 6 :] = 160
+            cut = self.path(name + "_cut.tif")
+            write_raster(cut, rgb[::-1], cut_alpha, (origin[0] + width - cut_width, origin[1]))
+            inputs.append((ortho, cut))
+
+        merged = self.merged_bytes(inputs)
+
+        # Every submodel misses some blocks, so this checks the skip.
+        for ortho, cut in inputs:
+            self.assertLess(len(self.reads_of(cut)), 6 * 5, cut)
+        # SHA-256 of the complete serial GeoTIFF that master at
+        # 8e2bd254b9be5096a9b12ba0244b7c15aaccfbaa writes for these inputs.
+        self.assertEqual(hashlib.sha256(merged).hexdigest(), "600811a53f0d748dfdaf6499a34119b1d88f1d7d4e5a455cb3d76ea5496763f0")
 
 if __name__ == "__main__":
     unittest.main()
