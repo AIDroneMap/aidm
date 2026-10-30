@@ -19,7 +19,6 @@ class BgFilter():
     def __init__(self, model):
         self.model = model
 
-        log.INFO(' ?> Using provider %s' % provider)
         self.load_model()
 
     
@@ -27,6 +26,9 @@ class BgFilter():
         log.INFO(' -> Loading the model')
 
         self.session = ort.InferenceSession(self.model, providers=[provider])
+        # ONNX Runtime falls back to the CPU when it cannot start the CUDA
+        # provider, so log the provider the session chose, not the one asked for
+        log.INFO('Background removal: ONNX Runtime provider %s' % self.session.get_providers()[0])
 
     def normalize(self, img, mean, std, size):
         im = cv2.resize(img, size, interpolation=cv2.INTER_AREA)

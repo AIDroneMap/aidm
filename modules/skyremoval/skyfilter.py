@@ -29,13 +29,15 @@ class SkyFilter():
         self.model = model
         self.width, self.height = width, height
 
-        log.INFO(' ?> Using provider %s' % provider)
         self.load_model()
 
     
     def load_model(self):
         log.INFO(' -> Loading the model')
-        self.session = ort.InferenceSession(self.model, providers=[provider])     
+        self.session = ort.InferenceSession(self.model, providers=[provider])
+        # ONNX Runtime falls back to the CPU when it cannot start the CUDA
+        # provider, so log the provider the session chose, not the one asked for
+        log.INFO('Sky removal: ONNX Runtime provider %s' % self.session.get_providers()[0])
 
 
     @staticmethod
