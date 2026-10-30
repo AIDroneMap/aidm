@@ -16,6 +16,10 @@
 #                                          run the engine image on the full set
 #                                          up to and including openmvs and pack
 #                                          the golden input (ADR 0004)
+#   scripts/smoke-test.sh golden <image>   run the engine image from the golden
+#                                          input, from odm_filterpoints to the
+#                                          end, and compare its outputs with a
+#                                          hash list (scripts/golden-compare.py)
 #
 # Examples:
 #   scripts/smoke-test.sh engine ghcr.io/aidronemap/aidm:0.1.0
@@ -39,6 +43,23 @@
 #                   ghcr.io/aidronemap/aidm-ci@sha256:... (required)
 #   SMOKE_DATASET defaults to full and must be full: the golden input is a run
 #   of the full set.
+#
+# golden only:
+#   GOLDEN_HASHES   the hash list (default: scripts/golden-hashes/<arch>.txt,
+#                   where <arch> is the architecture of the image)
+#   GOLDEN_REPORT   a file the report is appended to, for example
+#                   $GITHUB_STEP_SUMMARY (default: none)
+#   GOLDEN_DIAGNOSTIC
+#                   set to 1 to run the engine twice from the golden input, in
+#                   two fresh folders, and print for each run the SHA-256 of
+#                   every file and its hash list (golden-compare.py --list),
+#                   then the lines that differ between the runs. Compares
+#                   nothing and passes whatever the hashes are. This is how
+#                   the hash lists are written for a new golden input.
+#   The golden input is the one pinned in scripts/smoke-test.conf, whatever
+#   SMOKE_DATASET says. The engine runs with DEFAULT_OPTIONS and
+#   --rerun-from odm_filterpoints; SMOKE_OPTIONS must be unset, because the
+#   hashes belong to those options.
 #
 # Datasets: aidm-vineyard-ci v1 (32 images) and aidm-vineyard-small v1
 #   (73 images), RGB images from a DJI Mavic 3M, pinned by URL and SHA-256 in
@@ -107,7 +128,10 @@ fail() {
 [ $# -eq 2 ] || usage
 MODE="$1"
 IMAGE="$2"
-[ "$MODE" = "engine" ] || [ "$MODE" = "api" ] || [ "$MODE" = "golden-input" ] || usage
+case "$MODE" in
+    engine|api|golden-input|golden) ;;
+    *) usage ;;
+esac
 
 DEFAULT_DATASET=ci
 if [ "$MODE" = "golden-input" ]; then
@@ -117,6 +141,9 @@ if [ "$MODE" = "golden-input" ]; then
     [ -n "${GOLDEN_IMAGE:-}" ] || fail "golden-input needs GOLDEN_IMAGE, the image by digest"
 fi
 GOLDEN_OUT="${GOLDEN_OUT:-$PWD/golden-input}"
+if [ "$MODE" = "golden" ]; then
+    [ -z "${SMOKE_OPTIONS:-}" ] || fail "golden runs with DEFAULT_OPTIONS ($DEFAULT_OPTIONS), SMOKE_OPTIONS is '$SMOKE_OPTIONS'"
+fi
 
 case "${SMOKE_DATASET:-$DEFAULT_DATASET}" in
     ci)
@@ -151,27 +178,33 @@ CONTAINER=""
 # Images of the project, unpacked from the dataset zip for this run
 IMAGES_DIR="$WORK/project/images"
 
-# Download the dataset zip once, into a folder named after its SHA-256. On
-# every run, check its SHA-256, unpack it into the work folder and count the
-# images.
-fetch_dataset() {
-    local zip="$CACHE/$DATASET_SHA256/$DATASET_ZIP"
+# Download the zip at URL $1 once, into a folder named after its SHA-256 $2,
+# and check its SHA-256 on every run. Sets DOWNLOADED to its path.
+download() {
+    local url="$1" sha256="$2" zip
+    zip="$CACHE/$sha256/${url##*/}"
     if [ ! -f "$zip" ]; then
-        log "Downloading $DATASET_ZIP to $(dirname "$zip")"
+        log "Downloading ${url##*/} to $(dirname "$zip")"
         mkdir -p "$(dirname "$zip")"
-        curl -fsSL --retry 3 -o "$zip.tmp" "$DATASET_URL"
+        curl -fsSL --retry 3 -o "$zip.tmp" "$url"
         mv "$zip.tmp" "$zip"
     fi
 
     local sum
     sum=$(sha256sum "$zip" | cut -d ' ' -f 1)
-    if [ "$sum" != "$DATASET_SHA256" ]; then
+    if [ "$sum" != "$sha256" ]; then
         rm -f "$zip"
-        fail "$zip has SHA-256 $sum, expected $DATASET_SHA256; removed it, run again to download it again"
+        fail "$zip has SHA-256 $sum, expected $sha256; removed it, run again to download it again"
     fi
+    DOWNLOADED="$zip"
+}
 
+# Download the dataset zip, unpack it into the work folder and count the
+# images.
+fetch_dataset() {
+    download "$DATASET_URL" "$DATASET_SHA256"
     mkdir -p "$IMAGES_DIR"
-    python3 -I -m zipfile -e "$zip" "$IMAGES_DIR"
+    python3 -I -m zipfile -e "$DOWNLOADED" "$IMAGES_DIR"
     local count
     count=$(find "$IMAGES_DIR" -type f -iname '*.jpg' | wc -l)
     [ "$count" -eq "$DATASET_IMAGES" ] || fail "expected $DATASET_IMAGES images in $DATASET_ZIP, found $count"
@@ -186,7 +219,7 @@ cleanup() {
         log "Work folder kept at $WORK"
     else
         # The engine runs as root, so remove its files from inside a container
-        docker run --rm -v "$WORK:/work" --entrypoint rm "$IMAGE" -rf /work/project > /dev/null 2>&1 || true
+        docker run --rm -v "$WORK:/work" --entrypoint find "$IMAGE" /work -mindepth 1 -delete > /dev/null 2>&1 || true
         rm -rf "$WORK"
     fi
 }
@@ -371,7 +404,77 @@ EOF
     cat "$GOLDEN_OUT/golden-input.manifest"
 }
 
-fetch_dataset
+# Unpacks the golden input into $1/project and runs the engine on it from
+# odm_filterpoints, with $1 mounted at /datasets as the golden input expects
+run_golden_engine() {
+    local dir="$1" options="$DEFAULT_OPTIONS --rerun-from odm_filterpoints"
+    mkdir -p "$dir/project"
+    python3 -I -m zipfile -e "$DOWNLOADED" "$dir/project"
+    log "Running $IMAGE $options in $dir"
+    # shellcheck disable=SC2086
+    docker run --rm -v "$dir:/datasets" "$IMAGE" \
+        --project-path /datasets project $options 2>&1 | tee "$dir/engine.log"
+}
+
+# Prints "<sha256>  <path>" for every file of the project in $1, sorted by
+# path. Runs in the image, which can read every file the engine wrote.
+hash_project() {
+    docker run --rm -v "$1:/datasets:ro" --entrypoint sh "$IMAGE" \
+        -c 'cd /datasets/project && find . -type f -print0 | sort -z | xargs -0 sha256sum | sed "s|  \./|  |"'
+}
+
+# The golden comparison (docs/adr/0004-golden-outputs-start-from-the-stored-dense-point-cloud.md)
+run_golden() {
+    download "$GOLDEN_INPUT_URL" "$GOLDEN_INPUT_SHA256"
+    log "Golden input ${GOLDEN_INPUT_URL##*/}: SHA-256 ok"
+
+    if [ "${GOLDEN_DIAGNOSTIC:-0}" = "1" ]; then
+        local run
+        for run in 1 2; do
+            run_golden_engine "$WORK/run$run"
+            hash_project "$WORK/run$run" > "$WORK/run$run.sha256"
+        done
+        for run in 1 2; do
+            log "SHA-256 of every file of run $run"
+            cat "$WORK/run$run.sha256"
+            log "Hash list of run $run"
+            docker run --rm -v "$WORK/run$run:/datasets:ro" -v "$SCRIPTS:/smoke:ro" \
+                --entrypoint python3 "$IMAGE" -I /smoke/golden-compare.py --list /datasets/project
+        done
+        log "Lines that differ between run 1 (<) and run 2 (>)"
+        diff "$WORK/run1.sha256" "$WORK/run2.sha256" || true
+        return
+    fi
+
+    local hashes="${GOLDEN_HASHES:-}"
+    if [ -z "$hashes" ]; then
+        hashes="$SCRIPTS/golden-hashes/$(docker image inspect --format '{{.Architecture}}' "$IMAGE").txt"
+    fi
+    [ -f "$hashes" ] || fail "no hash list at $hashes"
+    hashes="$(cd "$(dirname "$hashes")" && pwd)/$(basename "$hashes")"
+
+    run_golden_engine "$WORK"
+    check_no_retry "$WORK/engine.log"
+
+    log "Comparing the outputs with $hashes"
+    local status=0
+    docker run --rm -v "$WORK:/datasets:ro" -v "$SCRIPTS:/smoke:ro" -v "$hashes:/golden/$(basename "$hashes"):ro" \
+        --entrypoint python3 "$IMAGE" -I /smoke/golden-compare.py /datasets/project "/golden/$(basename "$hashes")" \
+        > "$WORK/golden-report.md" || status=$?
+    cat "$WORK/golden-report.md"
+    if [ -n "${GOLDEN_REPORT:-}" ]; then
+        cat "$WORK/golden-report.md" >> "$GOLDEN_REPORT"
+    fi
+    case "$status" in
+        0) ;;
+        1) fail "the outputs differ from $hashes, see the report above" ;;
+        *) fail "the comparison did not run, see the line above" ;;
+    esac
+}
+
+if [ "$MODE" != "golden" ]; then
+    fetch_dataset
+fi
 started=$(date +%s)
 "run_${MODE//-/_}"
 log "PASS: $MODE smoke test of $IMAGE in $(( $(date +%s) - started )) seconds"
