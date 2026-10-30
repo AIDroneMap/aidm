@@ -24,6 +24,14 @@
 # Publish again from an existing tag, for example after a failed run:
 #   gh workflow run release.yml --ref v0.1.0 -f publish=true
 #
+# A dry run with golden_input set also produces the golden input of the
+# golden comparison (docs/adr/0004-golden-outputs-start-from-the-stored-dense-point-cloud.md):
+#   gh workflow run release.yml --ref <branch> -f publish=false -f golden_input=true
+# After its smoke test, the cpu-amd64 job runs the tested image on the full
+# set up to and including openmvs (scripts/smoke-test.sh golden-input) and
+# uploads the packed project folder, its SHA-256 and a manifest as the
+# artifact golden-input. Nightly and tag runs never produce it.
+#
 # Every run, dry run or tag, also tests the GPU image on a real NVIDIA GPU
 # (the gpu-test job). The GitHub runners have no GPU, so the build job only
 # proves that the GPU image falls back to the CPU. The build job pushes the
@@ -53,6 +61,10 @@ on:
     inputs:
       publish:
         description: Publish release tags. Needs a tag ref. When false, retain only untagged CI images.
+        type: boolean
+        default: false
+      golden_input:
+        description: Dry runs only. Also produce the golden input in the cpu-amd64 job and upload it as an artifact.
         type: boolean
         default: false
 
@@ -181,8 +193,9 @@ jobs:
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ${{ matrix.runner }}
     # About 1.5 times the measured job time with a full build of the C++
-    # dependencies, so a run that misses the build cache still finishes
-    timeout-minutes: ${{ matrix.timeout }}
+    # dependencies, so a run that misses the build cache still finishes.
+    # golden-timeout adds smoke-timeout and the upload for the golden input.
+    timeout-minutes: ${{ inputs.golden_input && matrix.golden-timeout || matrix.timeout }}
     permissions:
       contents: read
       packages: write
@@ -198,6 +211,7 @@ jobs:
             platform: linux/amd64
             timeout: 100
             smoke-timeout: 36
+            golden-timeout: 140
           - name: cpu-arm64
             runner: ubuntu-24.04-arm
             dockerfile: Dockerfile
@@ -338,6 +352,31 @@ jobs:
           if [ "$NAME" = "gpu-amd64" ]; then
             echo "gpu-image=$PUSHED_TO@$DIGEST" >> "$GITHUB_OUTPUT"
           fi
+
+      # Dry runs with golden_input only. Same image as the smoke test, which
+      # the step above proved is the pushed one, on the full set whatever the
+      # run's own set is. smoke-timeout covers a full run on the full set.
+      - name: Produce the golden input
+        id: golden
+        if: inputs.golden_input && matrix.name == 'cpu-amd64' && needs.check.outputs.mode == 'dry-run'
+        timeout-minutes: ${{ matrix.smoke-timeout }}
+        run: scripts/smoke-test.sh golden-input "aidm-smoke:$NAME"
+        env:
+          NAME: ${{ matrix.name }}
+          SMOKE_DATASET: full
+          GOLDEN_OUT: golden-input
+          GOLDEN_COMMIT: ${{ needs.check.outputs.ref }}
+          GOLDEN_IMAGE: ${{ env.CI_IMAGE }}@${{ steps.push.outputs.digest }}
+
+      # The zip is already compressed
+      - name: Upload the golden input
+        if: steps.golden.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: golden-input
+          path: golden-input/
+          if-no-files-found: error
+          compression-level: 0
 
       - name: Upload digest
         if: needs.check.outputs.publish == 'true'

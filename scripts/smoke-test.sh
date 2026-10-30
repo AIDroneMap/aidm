@@ -12,6 +12,10 @@
 #   scripts/smoke-test.sh api <image>      run an AIDM API image and go through
 #                                          its HTTP API: create a task, upload,
 #                                          wait, download all.zip
+#   scripts/smoke-test.sh golden-input <image>
+#                                          run the engine image on the full set
+#                                          up to and including openmvs and pack
+#                                          the golden input (ADR 0004)
 #
 # Examples:
 #   scripts/smoke-test.sh engine ghcr.io/aidronemap/aidm:0.1.0
@@ -26,6 +30,15 @@
 #   SMOKE_TIMEOUT   seconds to wait for an API task (default: 10800)
 #   SMOKE_GPU       set to 1 to pass --gpus all to docker
 #   SMOKE_KEEP      set to 1 to keep the work folder for inspection
+#
+# golden-input only:
+#   GOLDEN_OUT      folder for golden-input.zip, golden-input.zip.sha256 and
+#                   golden-input.manifest (default: ./golden-input)
+#   GOLDEN_COMMIT   the engine commit the image was built from (required)
+#   GOLDEN_IMAGE    the image by digest, for example
+#                   ghcr.io/aidronemap/aidm-ci@sha256:... (required)
+#   SMOKE_DATASET defaults to full and must be full: the golden input is a run
+#   of the full set.
 #
 # Datasets: aidm-vineyard-ci v1 (32 images) and aidm-vineyard-small v1
 #   (73 images), RGB images from a DJI Mavic 3M, pinned by URL and SHA-256 in
@@ -44,6 +57,34 @@ source "$SCRIPTS/smoke-test.conf"
 
 # Outputs that must exist and be non-empty, relative to the project folder
 read -r -a OUTPUT_FILES <<< "$OUTPUTS"
+
+# What the golden input keeps of the project folder, relative to it: what
+# odm_filterpoints and the later stages read, and what the earlier stages
+# look for before they skip their work on --rerun-from odm_filterpoints.
+# A folder is kept with everything in it.
+GOLDEN_PATHS=(
+    images.json
+    cameras.json
+    odm_georeferencing
+    opensfm/camera_mappings.npz
+    opensfm/config.yaml
+    opensfm/image_list.txt
+    opensfm/reconstruction.json
+    opensfm/reconstruction.topocentric.json
+    opensfm/tracks.csv
+    opensfm/updated_config.txt
+    opensfm/stats
+    opensfm/undistorted/nominal_done.txt
+    opensfm/undistorted/reconstruction.nvm
+    opensfm/undistorted/images
+    opensfm/undistorted/openmvs/scene_dense_dense_filtered.ply
+)
+# Folders the opensfm stage only checks for, kept empty
+GOLDEN_EMPTY_FOLDERS=(
+    opensfm/exif
+    opensfm/features
+    opensfm/matches
+)
 
 CACHE="${SMOKE_CACHE:-$HOME/.cache/aidm-smoke-test}"
 OPTIONS="${SMOKE_OPTIONS:-$DEFAULT_OPTIONS}"
@@ -66,9 +107,18 @@ fail() {
 [ $# -eq 2 ] || usage
 MODE="$1"
 IMAGE="$2"
-[ "$MODE" = "engine" ] || [ "$MODE" = "api" ] || usage
+[ "$MODE" = "engine" ] || [ "$MODE" = "api" ] || [ "$MODE" = "golden-input" ] || usage
 
-case "${SMOKE_DATASET:-ci}" in
+DEFAULT_DATASET=ci
+if [ "$MODE" = "golden-input" ]; then
+    DEFAULT_DATASET=full
+    [ "${SMOKE_DATASET:-full}" = "full" ] || fail "golden-input runs the full set, SMOKE_DATASET is '$SMOKE_DATASET'"
+    [ -n "${GOLDEN_COMMIT:-}" ] || fail "golden-input needs GOLDEN_COMMIT, the engine commit of the image"
+    [ -n "${GOLDEN_IMAGE:-}" ] || fail "golden-input needs GOLDEN_IMAGE, the image by digest"
+fi
+GOLDEN_OUT="${GOLDEN_OUT:-$PWD/golden-input}"
+
+case "${SMOKE_DATASET:-$DEFAULT_DATASET}" in
     ci)
         DATASET_URL="$CI_DATASET_URL"
         DATASET_SHA256="$CI_DATASET_SHA256"
@@ -78,6 +128,8 @@ case "${SMOKE_DATASET:-ci}" in
         DATASET_URL="$FULL_DATASET_URL"
         DATASET_SHA256="$FULL_DATASET_SHA256"
         DATASET_IMAGES="$FULL_DATASET_IMAGES"
+        DATASET_TAG="$FULL_DATASET_TAG"
+        DATASET_COMMIT="$FULL_DATASET_COMMIT"
         ;;
     *)
         fail "SMOKE_DATASET is '$SMOKE_DATASET', expected ci or full"
@@ -260,7 +312,66 @@ print(json.dumps(opts))' $OPTIONS)
     check_no_retry "$WORK/engine.log"
 }
 
+# Runs the engine up to and including openmvs and packs the golden input
+# (docs/adr/0004-golden-outputs-start-from-the-stored-dense-point-cloud.md)
+# into $GOLDEN_OUT: the zip, its SHA-256 and a manifest.
+run_golden_input() {
+    local options="$OPTIONS --end-with openmvs" project="$WORK/project"
+
+    log "Running $IMAGE $options"
+    # shellcheck disable=SC2086
+    docker run --rm -v "$WORK:/datasets" "$IMAGE" \
+        --project-path /datasets project $options 2>&1 | tee "$WORK/engine.log"
+
+    [ -s "$project/opensfm/undistorted/openmvs/scene_dense_dense_filtered.ply" ] \
+        || fail "openmvs wrote no dense point cloud"
+
+    mkdir -p "$GOLDEN_OUT"
+    rm -f "$GOLDEN_OUT/golden-input.zip"
+    log "Packing ${GOLDEN_PATHS[*]}, and ${GOLDEN_EMPTY_FOLDERS[*]} empty"
+    python3 -I - "$project" "$GOLDEN_OUT/golden-input.zip" \
+        "${GOLDEN_PATHS[@]}" --empty "${GOLDEN_EMPTY_FOLDERS[@]}" <<'EOF' \
+        || fail "cannot pack the golden input"
+import os, sys, zipfile
+root, archive, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+split = args.index("--empty")
+paths, empty = args[:split], args[split + 1:]
+with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+    for path in paths + empty:
+        full = os.path.join(root, path)
+        if not os.path.exists(full):
+            sys.exit("%s is not in the project folder" % path)
+        zf.write(full, path)
+        if path in empty:
+            continue
+        for folder, dirs, files in os.walk(full):
+            dirs.sort()
+            for name in dirs + sorted(files):
+                zf.write(os.path.join(folder, name),
+                         os.path.relpath(os.path.join(folder, name), root))
+EOF
+
+    local sum
+    sum=$(cd "$GOLDEN_OUT" && sha256sum golden-input.zip | tee golden-input.zip.sha256 | cut -d ' ' -f 1)
+    cat > "$GOLDEN_OUT/golden-input.manifest" << EOF
+# Golden input of the AIDM golden comparison, ADR 0004. Unpack
+# golden-input.zip into a folder named project and mount its parent at
+# /datasets, as scripts/smoke-test.sh does: the files name their paths
+# under /datasets/project.
+ENGINE_COMMIT="$GOLDEN_COMMIT"
+IMAGE="$GOLDEN_IMAGE"
+DATASET_URL="$DATASET_URL"
+DATASET_SHA256="$DATASET_SHA256"
+DATASET_TAG="$DATASET_TAG"
+DATASET_COMMIT="$DATASET_COMMIT"
+OPTIONS="$options"
+ARCHIVE_SHA256="$sum"
+EOF
+    log "Golden input in $GOLDEN_OUT: golden-input.zip ($(stat -c %s "$GOLDEN_OUT/golden-input.zip") bytes), SHA-256 $sum"
+    cat "$GOLDEN_OUT/golden-input.manifest"
+}
+
 fetch_dataset
 started=$(date +%s)
-"run_$MODE"
+"run_${MODE//-/_}"
 log "PASS: $MODE smoke test of $IMAGE in $(( $(date +%s) - started )) seconds"
