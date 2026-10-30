@@ -5,6 +5,8 @@
 # Starts the image by digest in a Modal Sandbox with one GPU, processes the
 # same dataset as scripts/smoke-test.sh, and checks that:
 #   - the engine found the GPU ("nvidia-smi detected");
+#   - feature matching ran on the GPU: the engine chose the GPU matcher,
+#     OpenSfM ran it, and OpenSfM never fell back to the CPU;
 #   - every DensifyPointCloud run used the GPU (--cuda-device -1, never -2);
 #   - the outputs listed in scripts/smoke-test.conf exist and are not empty;
 #   - the orthophoto is georeferenced where the images were taken
@@ -89,11 +91,23 @@ def read_config(path=CONF):
     return config
 
 
+# Feature matching on the GPU (ADR 0002). The engine line comes from
+# modules/osfm.py. The OpenSfM lines come from opensfm/matching.py at the
+# commit SuperBuild/cmake/External-OpenSfM.cmake pins, where both fallback
+# strings are one warning.
+MATCHER_ENGINE = "Using GPU for image matching"
+MATCHER_OPENSFM = "Computing pair matching on GPU"
+MATCHER_FALLBACK = (
+    "GPU matching requested but CUDA is not available",
+    "Falling back to CPU FLANN",
+)
+
+
 def check_engine_log(text):
     """Return a list of reasons why the engine log does not prove GPU use.
 
-    An empty list means the log shows that the engine found the GPU and ran
-    every DensifyPointCloud on it.
+    An empty list means the log shows that the engine found the GPU, matched
+    features on it and ran every DensifyPointCloud on it.
     """
     lines = text.splitlines()
     problems = []
@@ -102,6 +116,14 @@ def check_engine_log(text):
         problems.append("the engine logged 'No nvidia-smi detected'")
     elif not any("nvidia-smi detected" in l for l in lines):
         problems.append("the engine did not log 'nvidia-smi detected'")
+
+    if not any(MATCHER_ENGINE in l for l in lines):
+        problems.append("the engine did not log '%s'" % MATCHER_ENGINE)
+    if not any(MATCHER_OPENSFM in l for l in lines):
+        problems.append("OpenSfM did not log '%s'" % MATCHER_OPENSFM)
+    for l in lines:
+        if any(f in l for f in MATCHER_FALLBACK):
+            problems.append("feature matching fell back to the CPU: %s" % l.strip())
 
     densify = [l for l in lines if "running" in l and "DensifyPointCloud" in l]
     if not densify:
