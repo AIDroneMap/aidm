@@ -99,7 +99,7 @@ The workflow proved nothing the nightly does not: a no-cache cpu-amd64 build and
 - Conventional Commits on the title;
 - DCO sign-off on every commit.
 
-It is described in `AGENTS.md` in the same pull request.
+`AGENTS.md` describes it in a documentation pull request merged right after the workflow, as #67 did for the nightly: a pull request that touches `.github/` changes nothing else.
 
 A private-name check cannot live in a public workflow, since the list would publish the names. It stays in the review outside the repository.
 
@@ -140,7 +140,7 @@ v0.2.0 is tagged as soon as the taggable minimum holds on master. The API image 
 2. The Modal test asserts the OpenSfM GPU matcher.
 3. The GPU image has ONNX Runtime on the GPU, and the Modal test asserts it with the second dataset-stage run.
 4. The golden comparison runs in the three build jobs of `release.yml` and is green, with its input pinned in `aidm-data` and its hashes in the repository. Or the diagnostic's written verdict says no output is byte-stable.
-5. `lint.yml` is live, and `boat-build.yml` and its scripts are gone.
+5. `lint.yml` is live and described in `AGENTS.md`, and `boat-build.yml` and its scripts are gone.
 6. The `copy-to` fix is merged.
 7. The nightly has run green on master at least once, on the full dataset, with the golden step in place.
 8. The release pull request is merged, then the tag is pushed: the three images are built from source, the smoke test passes on the 73 images on each, and the Modal GPU test is green.
@@ -176,19 +176,20 @@ There is no "if in time" list. Each item is in the minimum or out of the release
 | Golden input artifact step (`release.yml`) | full | 1 | in the run | maintainer (CI code) |
 | Golden pin, hashes, compare step (`smoke-test.conf`, a compare script, `release.yml`) | full | 1, at most 2 | in the run | maintainer (CI code) |
 | `lint.yml` | workflow | 0 | no | nobody |
+| `AGENTS.md` describes `lint.yml` | unit | 0 | no | nobody, after `lint.yml` merges |
 | Remove `boat-build.yml` | workflow | 0 | no | nobody |
 | `copy-to` fix | unit | 0 | no | nobody |
 | Release pull request (`VERSION`, both Dockerfiles, `README.md`, `scripts/smoke-test.sh`, `CHANGELOG.md`) | full | 1 | in the run | maintainer (CI code), then the maintainer's tag push |
 
 Order and dependencies:
 
-- Lint, the removal of the sandbox workflow, the matcher assertion and the `copy-to` fix are independent.
+- Lint, the removal of the sandbox workflow, the matcher assertion and the `copy-to` fix are independent. The `AGENTS.md` sentence about lint follows the lint merge.
 - The ONNX assertion follows the ONNX GPU merge.
 - The golden compare step follows the artifact step and the maintainer's upload.
 - The release pull request is last. Its dry run is the rehearsal of the tag run.
 - The nightly must have run green before the tag.
 
-Six of the nine tickets are CI code (everything under `.github/` and `scripts/`). The maintainer starts their dry run, and the review loop hands them to the maintainer.
+Six of the ten tickets are CI code (everything under `.github/` and `scripts/`). The maintainer starts their dry run, and the review loop hands them to the maintainer.
 
 Runner cost: six to eight dry runs, 35 to 110 minutes each by the recent runs, three in parallel at most, plus the tag run. Run 40973807769 took 34 minutes with a warm cache. Runs with a full dependency build took 66 to 108 minutes.
 

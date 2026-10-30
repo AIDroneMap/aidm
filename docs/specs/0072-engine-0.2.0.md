@@ -75,7 +75,7 @@ Decisions come from the design note; the ticket that implements one does not reo
 
 ### CI
 
-- A lint workflow runs on every pull request and checks: no em dash in tracked text files (`.md`, `.py`, `.yml`, `.sh`, `.cmake`, `.txt`); the `Test depth:` line and the disclosure footnote in the pull request body; Conventional Commits on the title; the sign-off on every commit. It describes itself in the agent rules in the same pull request. A private-name check stays outside the repository.
+- A lint workflow runs on every pull request and checks: no em dash in tracked text files (`.md`, `.py`, `.yml`, `.sh`, `.cmake`, `.txt`); the `Test depth:` line and the disclosure footnote in the pull request body; Conventional Commits on the title; the sign-off on every commit. The agent rules describe it in a documentation pull request merged right after the workflow, as #67 did for the nightly, because a pull request that touches the workflows folder changes nothing else. A private-name check stays outside the repository.
 - The sandbox build workflow and its two scripts are removed. The maintainer deletes its secret. The nightly already does what it did.
 - The change-class matrix, path filters and the arm64 smoke test on pull requests wait until after the tag.
 
@@ -93,7 +93,7 @@ Decisions come from the design note; the ticket that implements one does not reo
 2. The Modal test asserts the OpenSfM GPU matcher.
 3. The GPU image has ONNX Runtime on the GPU and the Modal test asserts it.
 4. The golden comparison runs green in the three build jobs of the release workflow, with its input pinned and its hashes in the repository, or the diagnostic's written verdict that no output is byte-stable.
-5. The lint workflow is live; the sandbox workflow and its scripts are gone.
+5. The lint workflow is live and described in the agent rules; the sandbox workflow and its scripts are gone.
 6. The `copy-to` fix is merged.
 7. The nightly has run green on `master` at least once, on the full dataset, with the golden step in place.
 8. The release pull request is merged, then the tag is pushed and the tag run is green on the three images and the Modal GPU test.
@@ -122,6 +122,7 @@ Every ticket uses one of five seams. Four exist today; one is new.
 | Golden input artifact step | full | 2 | maintainer (CI code) |
 | Golden pin, hashes and compare step | full | 5, then 2 | maintainer (CI code) |
 | Lint workflow | workflow | 4 | nobody |
+| Agent rules describe the lint workflow | unit | 3, documentation only | nobody |
 | Remove the sandbox workflow | workflow | 4 | nobody |
 | `copy-to` fix | unit | 3, with a `Coverage gap:` line for split-merge | nobody |
 | Release pull request | full | 3, then 2 | maintainer (CI code), then the tag push |
@@ -144,6 +145,6 @@ Six to eight dry runs for the release, three in parallel at most, plus the tag r
 ## Further notes
 
 - The design note corrects the brief this release started from: the OpenSfM GPU matcher already runs on the GPU on Modal and nothing asserts it. That is why the GPU work is one assertion and one new path, not four flags.
-- Six of the nine tickets are CI code. The maintainer starts their dry runs and merges them by hand; the nightly never merges CI code.
+- Six of the ten tickets are CI code. The maintainer starts their dry runs and merges them by hand; the nightly never merges CI code.
 - Every pull request carries the house rules: sign-off, Conventional Commits, the disclosure footnote, the `Test depth:` line, a `Coverage gap:` line where no test reaches the code on real images, and no number for speed or memory.
 - What only the maintainer does: publish the golden input and approve its pin; start and merge the six CI-code pull requests; delete the sandbox secret; decide #34 if it ever fails a tag run; tag v0.2.0; ask for the baseline.
