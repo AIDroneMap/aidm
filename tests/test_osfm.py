@@ -61,5 +61,22 @@ class TestOSFM(unittest.TestCase):
         self.assertEqual(get_submodel_args_dict(args), 
             {'orthophoto-cutline': True, 'skip-3dmodel': True, 'dem-euclidean-map': True, 'skip-report': True})
 
+    def test_get_submodel_argv_drops_copy_to(self):
+        args = config.config(["--project-path", "/datasets", "--copy-to", "/target", "--crop", "5", "--cog"])
+        expected = ['--crop', '5.0', '--orthophoto-cutline', '--dem-euclidean-map', '--skip-3dmodel', '--skip-report']
+
+        # No copy target reaches a submodel, and the other options are unchanged
+        # (--cog is dropped as before)
+        for argv in (get_submodel_argv(args),
+                     get_submodel_argv(args, "/submodels", "submodel_0000")):
+            self.assertNotIn('--copy-to', argv)
+            self.assertNotIn('/target', argv)
+
+        self.assertEqual(get_submodel_argv(args)[1:], expected)
+        self.assertEqual(get_submodel_argv(args, "/submodels", "submodel_0000")[1:],
+            expected + ['--project-path', '/submodels', 'submodel_0000'])
+
+        self.assertNotIn('copy-to', get_submodel_args_dict(args))
+
 if __name__ == '__main__':
     unittest.main()
