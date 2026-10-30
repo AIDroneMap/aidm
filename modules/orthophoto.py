@@ -476,6 +476,7 @@ def merge(input_ortho_and_ortho_cuts, output_orthophoto, orthophoto_vars={}, max
 
         opened_sources = []
         opened_lock = threading.Lock()
+        failures = []
 
         def get_sources():
             """Return this thread's (ortho, cut) rasterio dataset handles.
@@ -498,7 +499,13 @@ def merge(input_ortho_and_ortho_cuts, output_orthophoto, orthophoto_vars={}, max
             Runs the naive-copy, feather-blend, and cutline-blend passes into a
             block-local array, then writes it to the shared output dataset under
             write_lock. Updates the shared progress counter (logged at each % increase).
+
+            parallel_map hangs if this raises, so it never does. The first
+            error is stored, later blocks are skipped, and merge raises it
+            after all workers are done.
             """
+            if failures:
+                return
 
             try:
                 dst_window, (left, bottom, right, top) = item
@@ -577,7 +584,7 @@ def merge(input_ortho_and_ortho_cuts, output_orthophoto, orthophoto_vars={}, max
                 with write_lock:
                     dstrast.write(dstarr, window=dst_window)
             except Exception as e:
-                log.WARNING("Orthophoto merge block failed: %s" % str(e))
+                failures.append((item[0], e))
 
         parallel_map(process_block, block_windows, max_workers)
 
@@ -586,5 +593,13 @@ def merge(input_ortho_and_ortho_cuts, output_orthophoto, orthophoto_vars={}, max
             for s, c in srcs:
                 s.close()
                 c.close()
+
+    if failures:
+        # A partial orthophoto would be taken as done when the stage reruns.
+        os.remove(output_orthophoto)
+        dst_window, e = failures[0]
+        (row_start, row_stop), (col_start, col_stop) = dst_window.toranges()
+        raise RuntimeError("Orthophoto merge failed on the block at rows %d to %d, columns %d to %d: %s"
+                           % (row_start, row_stop, col_start, col_stop, e)) from e
 
     return output_orthophoto
