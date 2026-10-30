@@ -328,12 +328,16 @@ jobs:
       # 15 minutes is about three times the stages from odm_filterpoints to
       # the end in the full-set smoke tests of runs 40836313546 and
       # 40842398704, which leaves room for the download of the golden input.
+      # Diagnostic of #82, for one dry run: two engine runs from the golden
+      # input in fresh folders, every hash of both printed, nothing compared,
+      # the job never failed by this step. Twice the step's timeout.
       - name: Golden comparison
-        timeout-minutes: 15
-        run: GOLDEN_REPORT="$GITHUB_STEP_SUMMARY" scripts/smoke-test.sh golden "aidm-smoke:$NAME"
+        timeout-minutes: 30
+        continue-on-error: true
+        run: scripts/smoke-test.sh golden "aidm-smoke:$NAME"
         env:
           NAME: ${{ matrix.name }}
-          GOLDEN_HASHES: scripts/golden-hashes/${{ matrix.golden-hashes }}.txt
+          GOLDEN_DIAGNOSTIC: "1"
 
       # Only after the smoke test passed. Same inputs as the tested build, so
       # every step comes from this runner's local build cache; mode=max also
