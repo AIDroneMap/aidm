@@ -1,0 +1,162 @@
+# Writing rules on every pull request.
+#
+# Checks what AGENTS.md asks of every pull request, so the reviewer spends
+# its rounds on the change:
+#   - no em dash (U+2014) in tracked .md, .py, .yml, .sh, .cmake and .txt
+#     files at the pull request head;
+#   - a "Test depth: " line in the body, with unit, smoke, full or workflow;
+#   - the disclosure footnote as the last non-empty line of the body;
+#   - a Conventional Commits title;
+#   - a Signed-off-by line on every commit, whose email is the commit
+#     author's email. The name is not compared: the name in git config and
+#     the name on the account often differ for the same person.
+#
+# Every step runs even when an earlier one failed, so one run reports every
+# broken rule. Each failure is an error annotation that names the file and
+# line, the commit, or the missing line.
+#
+# The title, the body and the author emails come from whoever opens the
+# pull request. They reach the steps only through env, never through an
+# expression inside run, and every annotation escapes what it prints.
+
+name: Lint
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited]
+
+concurrency:
+  group: lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    name: Writing rules
+    # Only pull requests from a branch of this repository. The checks enforce
+    # the rules AGENTS.md sets for agents, and agents work on branches of this
+    # repository. The contributing guide does not ask fork contributors for the
+    # "Test depth:" line or the disclosure footnote. REVIEW.md blocks a trigger
+    # for events from forks. A pull request from a fork skips this job.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Runner images are pinned on purpose. Moving to a new image is its own PR.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout the pull request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The head commit, not the merge commit, so the em dash check reads
+          # the files as the pull request has them.
+          ref: ${{ github.event.pull_request.head.sha }}
+          # Full history, so every commit between the base and the head is here.
+          fetch-depth: 0
+
+      - name: No em dash in tracked text files
+        if: ${{ !cancelled() }}
+        run: |
+          # Escape what goes into a workflow command, so a file name cannot
+          # end the command or start another one.
+          esc_data() { local s=${1//%/%25}; s=${s//$'\r'/%0D}; printf '%s' "${s//$'\n'/%0A}"; }
+          esc_prop() { local s; s=$(esc_data "$1"); s=${s//:/%3A}; printf '%s' "${s//,/%2C}"; }
+          dash=$'\xe2\x80\x94'
+          status=0
+          while IFS= read -r -d '' file; do
+            while IFS=: read -r line _; do
+              echo "::error file=$(esc_prop "$file"),line=$line::$(esc_data "Em dash (U+2014) in $file, line $line. Use a comma, a colon, parentheses or two sentences instead.")"
+              status=1
+            done < <(LC_ALL=C grep -n -F -e "$dash" -- "$file" || true)
+          done < <(git ls-files -z -- '*.md' '*.py' '*.yml' '*.sh' '*.cmake' '*.txt')
+          if [ "$status" -eq 0 ]; then
+            echo "No em dash in the tracked text files."
+          fi
+          exit "$status"
+
+      - name: Test depth line in the body
+        if: ${{ !cancelled() }}
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          body=${PR_BODY//$'\r'/}
+          if grep -qE '^Test depth: (unit|smoke|full|workflow)([^[:alnum:]_-]|$)' <<< "$body"; then
+            echo "The body declares its test depth."
+          else
+            echo "::error title=Missing test depth::The pull request body has no line that starts with 'Test depth: ' followed by unit, smoke, full or workflow. Add one, for example 'Test depth: unit', and on the next line name the test that runs the changed code."
+            exit 1
+          fi
+
+      - name: Disclosure footnote as the last line of the body
+        if: ${{ !cancelled() }}
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          footnote='One or more AI agents provided valued contribution.'
+          body=${PR_BODY//$'\r'/}
+          mapfile -t lines <<< "$body"
+          last=
+          for ((i = ${#lines[@]} - 1; i >= 0; i--)); do
+            l=${lines[i]}
+            l=${l%"${l##*[![:space:]]}"}
+            if [ -n "$l" ]; then
+              last=$l
+              break
+            fi
+          done
+          if [ "$last" = "$footnote" ]; then
+            echo "The body ends with the disclosure footnote."
+          else
+            echo "::error title=Missing disclosure footnote::The last non-empty line of the pull request body must be exactly '$footnote' with no heading and nothing after it."
+            exit 1
+          fi
+
+      - name: Conventional Commits title
+        if: ${{ !cancelled() }}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+          re="^($types)(\\([^()[:space:]]+\\))?!?: [^[:space:]]"
+          if [[ $PR_TITLE =~ $re ]]; then
+            echo "The title is a Conventional Commit."
+          else
+            echo "::error title=Title not a Conventional Commit::The pull request title must read 'type(scope)!: subject', where type is one of ${types//|/, } and the scope and the '!' are optional. Example: 'fix(exif): read the altitude from the XMP tag'."
+            exit 1
+          fi
+
+      - name: Sign-off on every commit
+        if: ${{ !cancelled() }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          esc_data() { local s=${1//%/%25}; s=${s//$'\r'/%0D}; printf '%s' "${s//$'\n'/%0A}"; }
+          re='^Signed-off-by: .+ <([^<>]+)>[[:space:]]*$'
+          status=0
+          count=0
+          while IFS= read -r sha; do
+            count=$((count + 1))
+            email=$(git log -1 --format=%ae "$sha")
+            signed=0
+            while IFS= read -r l; do
+              l=${l%$'\r'}
+              if [[ $l =~ $re ]] && [ "${BASH_REMATCH[1],,}" = "${email,,}" ]; then
+                signed=1
+                break
+              fi
+            done < <(git log -1 --format=%B "$sha")
+            if [ "$signed" -eq 0 ]; then
+              echo "::error title=Missing sign-off::$(esc_data "Commit ${sha:0:12} has no 'Signed-off-by: Name <$email>' line with its author's email. Add it with 'git commit --amend -s' for the last commit, or 'git rebase --signoff $BASE_SHA' for all of them, then push.")"
+              status=1
+            fi
+          done < <(git rev-list --reverse "$BASE_SHA..$HEAD_SHA")
+          if [ "$status" -eq 0 ]; then
+            echo "Every commit carries a sign-off with its author's email ($count checked)."
+          fi
+          exit "$status"
