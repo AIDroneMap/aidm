@@ -54,6 +54,22 @@ Follow this order for any change larger than a small fix:
 - Changes merged between releases go under `## Unreleased` at the top of `CHANGELOG.md`. Every entry says what changed and where the evidence is (a test, a check, a benchmark record).
 - A pull request that touches `.github/` changes nothing else and lands on its own.
 
+### The lint workflow
+
+`.github/workflows/lint.yml` (Lint) runs on every pull request when it is opened, pushed to or edited. It checks these rules:
+
+- No em dash (U+2014) in the tracked `.md`, `.py`, `.yml`, `.sh`, `.cmake` and `.txt` files, as they are at the head of the pull request.
+- A line in the description that starts with `Test depth: ` followed by `unit`, `smoke`, `full` or `workflow`.
+- The footnote as the last non-empty line of the description.
+- A Conventional Commits title.
+- A `Signed-off-by: Name <email>` line in every commit between the base and the head. The email must be the email of the commit's author. The name is not compared, because the name in git config and the name on the account often differ for the same person.
+
+Every check runs even when an earlier one failed, so one run lists every broken rule. A pull request fails on a broken rule. The failure names the file and line, the commit, or the missing line.
+
+Lint runs only for pull requests from a branch of this repository. A pull request from a fork skips it. It enforces the rules of this file, which are written for agents, and agents work on branches of this repository. The contributing guide does not ask fork contributors for the `Test depth:` line or the footnote, and `REVIEW.md` blocks a trigger for events from forks.
+
+Lint does not check for private names. Keeping them out of files, commits and pull requests stays the author's job, and the reviewer's.
+
 ## Origin and reference (ODX and OpenDroneMap)
 
 AIDM started as a fork of ODX 3.8.4, which itself descends from OpenDroneMap. That is the origin, credited in `README.md`, the licence headers and the changelog history. ODX and OpenDroneMap are reference projects, not upstream.
