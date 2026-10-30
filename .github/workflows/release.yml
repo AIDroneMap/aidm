@@ -32,6 +32,11 @@
 # uploads the packed project folder, its SHA-256 and a manifest as the
 # artifact golden-input. Nightly and tag runs never produce it.
 #
+# Every run, in every mode, runs the golden comparison in the three build
+# jobs after the smoke test: the tested image from the pinned golden input,
+# from odm_filterpoints to the end, with its outputs compared by SHA-256 to
+# the hash lists in scripts/golden-hashes/ (scripts/smoke-test.sh golden).
+#
 # Every run, dry run or tag, also tests the GPU image on a real NVIDIA GPU
 # (the gpu-test job). The GitHub runners have no GPU, so the build job only
 # proves that the GPU image falls back to the CPU. The build job pushes the
@@ -193,7 +198,8 @@ jobs:
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ${{ matrix.runner }}
     # About 1.5 times the measured job time with a full build of the C++
-    # dependencies, so a run that misses the build cache still finishes.
+    # dependencies, so a run that misses the build cache still finishes,
+    # plus the 15 minutes of the golden comparison step.
     # golden-timeout adds smoke-timeout and the upload for the golden input.
     timeout-minutes: ${{ inputs.golden_input && matrix.golden-timeout || matrix.timeout }}
     permissions:
@@ -209,22 +215,25 @@ jobs:
             runner: ubuntu-24.04
             dockerfile: Dockerfile
             platform: linux/amd64
-            timeout: 100
+            timeout: 115
             smoke-timeout: 36
-            golden-timeout: 140
+            golden-timeout: 155
+            golden-hashes: amd64
           - name: cpu-arm64
             runner: ubuntu-24.04-arm
             dockerfile: Dockerfile
             platform: linux/arm64
-            timeout: 70
+            timeout: 85
             smoke-timeout: 25
+            golden-hashes: arm64
           # The runner has no GPU, so the smoke test runs this image on the CPU
           - name: gpu-amd64
             runner: ubuntu-24.04
             dockerfile: gpu.Dockerfile
             platform: linux/amd64
-            timeout: 135
+            timeout: 150
             smoke-timeout: 54
+            golden-hashes: amd64
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -307,6 +316,24 @@ jobs:
         env:
           NAME: ${{ matrix.name }}
           SMOKE_DATASET: ${{ needs.check.outputs.mode == 'dry-run' && 'ci' || 'full' }}
+
+      # The golden comparison (docs/adr/0004-golden-outputs-start-from-the-stored-dense-point-cloud.md),
+      # in every mode. scripts/smoke-test.sh golden downloads the golden input
+      # pinned in scripts/smoke-test.conf, a run of the full set up to
+      # openmvs, whatever the run's own set is. It runs the tested image on
+      # it from odm_filterpoints to the end and compares the outputs with
+      # scripts/golden-hashes/<golden-hashes>.txt. Any difference fails the
+      # job; the report goes to the job summary. The gpu-amd64 job runs it on
+      # its CPU runner, like its smoke test.
+      # 15 minutes is about three times the stages from odm_filterpoints to
+      # the end in the full-set smoke tests of runs 40836313546 and
+      # 40842398704, which leaves room for the download of the golden input.
+      - name: Golden comparison
+        timeout-minutes: 15
+        run: GOLDEN_REPORT="$GITHUB_STEP_SUMMARY" scripts/smoke-test.sh golden "aidm-smoke:$NAME"
+        env:
+          NAME: ${{ matrix.name }}
+          GOLDEN_HASHES: scripts/golden-hashes/${{ matrix.golden-hashes }}.txt
 
       # Only after the smoke test passed. Same inputs as the tested build, so
       # every step comes from this runner's local build cache; mode=max also

@@ -1,0 +1,29 @@
+# Golden outputs on amd64: "<sha256>  <path>", relative to the project folder,
+# as scripts/golden-compare.py --list prints them. Compared by
+# scripts/smoke-test.sh golden; see the header of scripts/golden-compare.py
+# for the files left out and why.
+#
+# Provisional, from the scratch-machine diagnostic of #82. The hashes of the
+# cpu-amd64 job of the diagnostic dry run replace them.
+88709d5b86de8375edff0e1f2e5724abd313a9d83836435c43ba873608387e8b  odm_dem/dsm.preview.tif.aux.xml
+75cf1abe688083c6c1d843e8c927f8303c9c067a62f8a8b26e41721da3c75d92  odm_dem/dsm.tif
+0159705dff378365a92fb0c49476c4b4ce554ba624b94e7b1337b070fd25fdb4  odm_filterpoints/point_cloud.ply
+a390a62284c4060bdac396aac7f6937e71ebccd02c75fe28ddad7d41747b660b  odm_filterpoints/point_cloud_stats.json
+33031bb79a61f07b4525a282e0af8f0d13bc4eb1e786118aa4a4fad64b7c885d  odm_georeferencing/odm_georeferenced_model.bounds.geojson
+a694edf7846ce60fde4f6e8973c68b9ffa1ecf32c8cf70bf5f520eb35057b555  odm_georeferencing/odm_georeferenced_model.laz
+2c4dd72078bb142fee711704fc1abf0677fe364b0b930f1a59fbff780f21de82  odm_meshing/odm_25dmesh.mvs
+6628fc8187f93695d85930b699adc436fecca11feff5c815bc50dffa1f40afb7  odm_meshing/odm_25dmesh.ply
+53c77083731ab2b3423580381b8a6e2bbc0c233d9ff31526af87b03a48fb733d  odm_orthophoto/odm_orthophoto.tfw
+698de2c8aea294bfc2e52eed4a27928491bd80f4976950e6948169927f929c30  odm_orthophoto/odm_orthophoto_corners.txt
+3289622428f5937bb1ea1c6d2277122468fdd5e76d5227c2d119e50df839b2fe  odm_orthophoto/odm_orthophoto_extent.dxf
+81eab4c48c35240ca1987c33375707e13201e32f871dc08572678dc92c9dee44  odm_report/camera_mappings.npz
+76a8600caeef38342006d64fa9f9c3eb572a7f6a4d6a3df554dc619cb71fec97  odm_report/shots.geojson
+e2ac49865287013c25a8b8820e7b67c9c32bb6ac7cc00eea3ed1b50bc85b9847  opensfm/stats/dsm.png
+8012f928c67b1db0ac7b18a36356bfbaf907b3ccf12847251e46128b8b68c80d  opensfm/stats/dsm.png.aux.xml
+93d9ce737e2f5aa8819e625c0108227c81d432e415c737e59ddf8577366a680d  opensfm/stats/dsm_gradient.png
+8d8d7cd1f7f52523d5e8899a5f44954556670127fd16e725093edc8c86853855  opensfm/stats/ortho.png.aux.xml
+998c79a13386859743485594633cc9fdaa727f0f55047dad8baa2f18d059cbfd  opensfm/stats/ortho.wld
+80eb85d9b6ec8db8f17d6fa2cdd5aba2ab3219a14f5adce62caa6a96ecbf6312  opensfm/stats/overlap.png
+9f4f20a6b3db6e32680a693103c22f85e3d58120d27b394212c11940c72fac8e  opensfm/stats/overlap.png.aux.xml
+66fb85a0479d1592290383082763f13020d8e785f2d9c20af5e8074bb7f7984c  opensfm/stats/overlap.tif
+408b15fb885c6f9b41ebb43214766ae7822bf524bc2320dc456d4677850ecd4a  opensfm/stats/overlap_diagram_legend.png
