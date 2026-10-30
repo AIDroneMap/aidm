@@ -107,7 +107,7 @@ A private-name check cannot live in a public workflow, since the list would publ
 
 ### 10. Version and changelog
 
-One `unit` pull request at the end bumps `VERSION` and the four hard-coded copies: the `org.opencontainers.image.version` label in `Dockerfile` and `gpu.Dockerfile`, the `docker run` examples in `README.md`, and the usage line of `scripts/smoke-test.sh`. It renames `## Unreleased` to `## 0.2.0` with the date.
+One pull request at the end bumps `VERSION` and the four hard-coded copies: the `org.opencontainers.image.version` label in `Dockerfile` and `gpu.Dockerfile`, the `docker run` examples in `README.md`, and the usage line of `scripts/smoke-test.sh`. It renames `## Unreleased` to `## 0.2.0` with the date. Its depth is `full`, because it edits both Dockerfiles, and it is CI code, because it edits a file under `scripts/`: the maintainer starts its dry run, which builds the three images with the 0.2.0 label as a rehearsal of the tag run, and merges it by hand, since the nightly never merges a pull request that changes CI code.
 
 It adds one paragraph that tells the release as a whole:
 
@@ -178,26 +178,26 @@ There is no "if in time" list. Each item is in the minimum or out of the release
 | `lint.yml` | workflow | 0 | no | nobody |
 | Remove `boat-build.yml` | workflow | 0 | no | nobody |
 | `copy-to` fix | unit | 0 | no | nobody |
-| Release pull request | unit | 0 | no | nobody, then the maintainer's tag push |
+| Release pull request (`VERSION`, both Dockerfiles, `README.md`, `scripts/smoke-test.sh`, `CHANGELOG.md`) | full | 1 | in the run | maintainer (CI code), then the maintainer's tag push |
 
 Order and dependencies:
 
 - Lint, the removal of the sandbox workflow, the matcher assertion and the `copy-to` fix are independent.
 - The ONNX assertion follows the ONNX GPU merge.
 - The golden compare step follows the artifact step and the maintainer's upload.
-- The release pull request is last.
+- The release pull request is last. Its dry run is the rehearsal of the tag run.
 - The nightly must have run green before the tag.
 
-Five of the nine tickets are CI code (everything under `.github/` and `scripts/`). The maintainer starts their dry run, and the review loop hands them to the maintainer.
+Six of the nine tickets are CI code (everything under `.github/` and `scripts/`). The maintainer starts their dry run, and the review loop hands them to the maintainer.
 
-Runner cost: five to seven dry runs, 35 to 110 minutes each by the recent runs, three in parallel at most, plus the tag run. Run 40973807769 took 34 minutes with a warm cache. Runs with a full dependency build took 66 to 108 minutes.
+Runner cost: six to eight dry runs, 35 to 110 minutes each by the recent runs, three in parallel at most, plus the tag run. Run 40973807769 took 34 minutes with a warm cache. Runs with a full dependency build took 66 to 108 minutes.
 
 Every pull request keeps the house rules: sign-off, Conventional Commits, the AI disclosure, the `Test depth:` line, and a `Coverage gap:` line where no test reaches the code on real images. The `copy-to` fix carries one for split-merge.
 
 ## What only the maintainer does
 
 - Publish the golden input to `aidm-data` and approve its pin.
-- Start the dry runs of the five CI-code tickets and merge them.
+- Start the dry runs of the six CI-code tickets and merge them.
 - Delete the sandbox secret.
 - Decide #34 if it ever fails a tag run.
 - Tag v0.2.0.
