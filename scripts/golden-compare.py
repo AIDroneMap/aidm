@@ -44,8 +44,9 @@ NOT_STABLE = "Not byte-stable between two runs from the same golden input"
 # Files left out of the comparison, and why, as (pattern, reason). A pattern
 # ending in / leaves out a folder with everything in it; any other pattern is
 # matched against the whole path, with * and ? as in a shell. Found by the
-# diagnostic of #82: two runs from the same golden input on one machine, and
-# two runs on each build job of a release dry run.
+# diagnostic of #82: two runs from the same golden input on a scratch
+# machine, and two runs in each build job of release dry run 41016730652.
+# The runners and the scratch machine found the same outputs not stable.
 LEFT_OUT = [
     ("images.json", INPUT),
     ("cameras.json", INPUT),
