@@ -328,6 +328,42 @@ class TestOrthophotoMerge(unittest.TestCase):
         self.assertEqual(len(self.reads_of(second[1])), BLOCKS)
         self.assertEqual(merged, self.merged_bytes(inputs, read_every_source=True))
 
+    def test_failed_block_fails_merge(self):
+        opaque = np.full((SIZE, SIZE), 255, dtype=np.uint8)
+        first = self.make_input("o1", (200, 100, 50), opaque)
+        second = self.make_input("o2", (40, 80, 120), opaque)
+        # Block 6 of 16: row 1, column 2 of the 4 x 4 block grid.
+        failing = ((BLOCK, 2 * BLOCK), (2 * BLOCK, 3 * BLOCK))
+        real_read = ReadCounter.read
+
+        def read(counter, *args, **kwargs):
+            if counter._path == second[0] and kwargs.get("window") == failing:
+                raise OSError("simulated read error")
+            return real_read(counter, *args, **kwargs)
+
+        for workers in (1, 2):
+            with self.subTest(workers=workers):
+                self.reads.clear()
+                out = self.path("merged_%d.tif" % workers)
+                with mock.patch.object(ReadCounter, "read", read), \
+                     mock.patch("modules.orthophoto.rasterio.open", side_effect=self.fake_open):
+                    with self.assertRaises(RuntimeError) as raised:
+                        orthophoto.merge(
+                            [first, second], out,
+                            orthophoto_vars={"BLOCKXSIZE": BLOCK, "BLOCKYSIZE": BLOCK},
+                            max_workers=workers,
+                        )
+
+                self.assertIn("rows 16 to 32, columns 32 to 48", str(raised.exception))
+                self.assertIn("simulated read error", str(raised.exception))
+                self.assertIsInstance(raised.exception.__cause__, OSError)
+                # A partial orthophoto would be taken as done on a rerun.
+                self.assertFalse(os.path.exists(out))
+                if workers == 1:
+                    # Source 1 is read twice per block. No block after the
+                    # failed one is processed.
+                    self.assertEqual(len(self.reads_of(first[0])), 2 * 7)
+
     def test_split_merge_is_byte_identical_to_master(self):
         # Four submodels on a 96 x 80 px output, as a split run makes them:
         # each covers part of the output, neighbours overlap, and their
