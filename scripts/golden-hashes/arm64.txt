@@ -16,8 +16,13 @@
 # CPU model, so it left the list.
 # The 18 outputs below matched on the arm64 runners of runs 41016730652,
 # 41030223058 and 41045655132.
+# Two of the outputs carry the engine version in a GeoTIFF tag
+# (TIFFTAG_SOFTWARE=AIDM <VERSION>): odm_dem/dsm.tif, and
+# opensfm/stats/ortho.png.aux.xml through the metadata of the orthophoto. A
+# pull request that changes VERSION changes their hashes and pins them again.
+# Pinned for 0.2.0 from release dry run 41071957013.
 88709d5b86de8375edff0e1f2e5724abd313a9d83836435c43ba873608387e8b  odm_dem/dsm.preview.tif.aux.xml
-75cf1abe688083c6c1d843e8c927f8303c9c067a62f8a8b26e41721da3c75d92  odm_dem/dsm.tif
+f01a6749384e2aa81fa7c984400caedecf3f589d72713d9b2daa03d34abdd715  odm_dem/dsm.tif
 0159705dff378365a92fb0c49476c4b4ce554ba624b94e7b1337b070fd25fdb4  odm_filterpoints/point_cloud.ply
 a390a62284c4060bdac396aac7f6937e71ebccd02c75fe28ddad7d41747b660b  odm_filterpoints/point_cloud_stats.json
 33031bb79a61f07b4525a282e0af8f0d13bc4eb1e786118aa4a4fad64b7c885d  odm_georeferencing/odm_georeferenced_model.bounds.geojson
@@ -28,7 +33,7 @@ a694edf7846ce60fde4f6e8973c68b9ffa1ecf32c8cf70bf5f520eb35057b555  odm_georeferen
 81eab4c48c35240ca1987c33375707e13201e32f871dc08572678dc92c9dee44  odm_report/camera_mappings.npz
 8012f928c67b1db0ac7b18a36356bfbaf907b3ccf12847251e46128b8b68c80d  opensfm/stats/dsm.png.aux.xml
 93d9ce737e2f5aa8819e625c0108227c81d432e415c737e59ddf8577366a680d  opensfm/stats/dsm_gradient.png
-8d8d7cd1f7f52523d5e8899a5f44954556670127fd16e725093edc8c86853855  opensfm/stats/ortho.png.aux.xml
+8cae43527e3582465f00c08bbb3f38be94aab6bfb6c66c763394e3d061efec2d  opensfm/stats/ortho.png.aux.xml
 998c79a13386859743485594633cc9fdaa727f0f55047dad8baa2f18d059cbfd  opensfm/stats/ortho.wld
 80eb85d9b6ec8db8f17d6fa2cdd5aba2ab3219a14f5adce62caa6a96ecbf6312  opensfm/stats/overlap.png
 9f4f20a6b3db6e32680a693103c22f85e3d58120d27b394212c11940c72fac8e  opensfm/stats/overlap.png.aux.xml
