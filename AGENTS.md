@@ -27,7 +27,8 @@ AIDM is the engine only. Scheduling, cloud provider connectors and the web inter
 | `scripts/` | Smoke test, dataset pins, CI helpers |
 | `Dockerfile`, `gpu.Dockerfile` | CPU and CUDA images, the only supported build targets |
 | `settings.yaml` | Default settings |
-| `docs/` | Documentation; specs go in `docs/specs/`, decisions in `docs/adr/` |
+| `docs/` | Documentation; specs go in `docs/specs/`, decisions in `docs/adr/`, design notes in `docs/design/` |
+| `GLOSSARY.md` | The words the documentation, specs and pull requests use for how the engine is built, tested and released |
 
 Windows and macOS builds inherited from ODX are not maintained. Their files were removed in 0.1.0, except `configure.py`, which is kept for now. Do not edit it.
 
