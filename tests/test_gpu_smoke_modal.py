@@ -14,8 +14,28 @@ spec = importlib.util.spec_from_file_location("gpu_smoke_modal", SCRIPT)
 gpu_smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gpu_smoke)
 
+# Matching lines of the Modal job log of release dry run 40973807769. The
+# engine line comes from modules/osfm.py, in color; the other lines come from
+# OpenSfM. "Matching 100 training pairs with FLANN" is part of the GPU path.
+ENGINE_GPU_MATCHER = "\x1b[39m[INFO] Using GPU for image matching\x1b[0m\n"
+OPENSFM_GPU_MATCHER = """[CUDA] 1 device(s) available for matching:
+  [0] Tesla T4 (14920 MB)
+[INFO] Computing pair matching on GPU (CUDA, 1 device(s))
+[INFO] Training projection at runtime
+[INFO] Matching 100 training pairs with FLANN (4 processes)
+[INFO] Batched Hamming matching 255 pairs (5100000 total features) on GPU
+[INFO] Batched Hamming matching completed in 0.61 seconds
+[INFO] Computing pair matching with 4 processes
+"""
+# The warning of opensfm/matching.py, in the "[%(levelname)s] %(message)s"
+# format of opensfm/log.py, at the commit SuperBuild/cmake/External-OpenSfM.cmake
+# pins. OpenSfM writes it instead of the GPU line when CUDA is missing.
+OPENSFM_CPU_FALLBACK = ("[WARNING] GPU matching requested but CUDA is not available. "
+                        "Falling back to CPU FLANN.\n")
+GPU_MATCHER = ENGINE_GPU_MATCHER + OPENSFM_GPU_MATCHER
+
 GOOD_LOG = """[INFO]    nvidia-smi detected
-[INFO]    running "/code/SuperBuild/install/bin/OpenMVS/DensifyPointCloud" "/x/scene.mvs" --resolution-level 1 --cuda-device -1 --geometric-iters 0
+""" + GPU_MATCHER + """[INFO]    running "/code/SuperBuild/install/bin/OpenMVS/DensifyPointCloud" "/x/scene.mvs" --resolution-level 1 --cuda-device -1 --geometric-iters 0
 """
 CPU_DENSIFY = """[INFO]    running "/code/SuperBuild/install/bin/OpenMVS/DensifyPointCloud" "/x/scene.mvs" --resolution-level 1 --cuda-device -2 --geometric-iters 0
 """
@@ -169,7 +189,7 @@ class TestCheckEngineLog(unittest.TestCase):
         self.assertTrue(gpu_smoke.check_engine_log(text))
 
     def test_densify_on_cpu_though_gpu_detected(self):
-        text = "[INFO]    nvidia-smi detected\n" + CPU_DENSIFY
+        text = "[INFO]    nvidia-smi detected\n" + GPU_MATCHER + CPU_DENSIFY
         problems = gpu_smoke.check_engine_log(text)
         self.assertEqual(len(problems), 1)
         self.assertIn("--cuda-device -1", problems[0])
@@ -189,6 +209,47 @@ class TestCheckEngineLog(unittest.TestCase):
 
     def test_empty_log(self):
         self.assertTrue(gpu_smoke.check_engine_log(""))
+
+
+class TestCheckMatcher(unittest.TestCase):
+    """Feature matching ran on the GPU (ADR 0002)."""
+
+    def test_both_lines(self):
+        self.assertEqual(gpu_smoke.check_engine_log(GOOD_LOG), [])
+
+    def test_engine_line_missing(self):
+        text = GOOD_LOG.replace(ENGINE_GPU_MATCHER, "")
+        self.assertEqual(gpu_smoke.check_engine_log(text),
+                         ["the engine did not log 'Using GPU for image matching'"])
+
+    def test_opensfm_line_missing(self):
+        text = GOOD_LOG.replace(OPENSFM_GPU_MATCHER, "")
+        self.assertEqual(gpu_smoke.check_engine_log(text),
+                         ["OpenSfM did not log 'Computing pair matching on GPU'"])
+
+    def test_cpu_fallback(self):
+        # What OpenSfM writes when the engine asks for the GPU matcher and
+        # CUDA is missing: the warning, and no GPU line
+        text = GOOD_LOG.replace(OPENSFM_GPU_MATCHER, OPENSFM_CPU_FALLBACK)
+        self.assertEqual(gpu_smoke.check_engine_log(text), [
+            "OpenSfM did not log 'Computing pair matching on GPU'",
+            "feature matching fell back to the CPU: " + OPENSFM_CPU_FALLBACK.strip(),
+        ])
+
+    def test_cpu_fallback_next_to_gpu_line(self):
+        # One fallback fails the test even when another matching run used the GPU
+        text = GOOD_LOG + OPENSFM_CPU_FALLBACK
+        self.assertEqual(gpu_smoke.check_engine_log(text),
+                         ["feature matching fell back to the CPU: " + OPENSFM_CPU_FALLBACK.strip()])
+
+    def test_each_fallback_string(self):
+        # OpenSfM writes both strings in one warning; either one fails the test
+        for fallback in gpu_smoke.MATCHER_FALLBACK:
+            with self.subTest(fallback=fallback):
+                self.assertIn(fallback, OPENSFM_CPU_FALLBACK)
+                line = "[WARNING] " + fallback + "\n"
+                self.assertEqual(gpu_smoke.check_engine_log(GOOD_LOG + line),
+                                 ["feature matching fell back to the CPU: " + line.strip()])
 
 
 if __name__ == "__main__":
