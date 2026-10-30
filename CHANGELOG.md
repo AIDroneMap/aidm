@@ -2,7 +2,9 @@
 
 AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX version it is based on.
 
-## Unreleased
+## 0.2.0
+
+Engine 0.2.0, released on 30 October 2026, ships with aidm-api 2.7.0 and the first tag of aidm-ui. The engine reports only its own version and no longer writes an `UPSTREAM_VERSION` file. The GPU image carries cuDNN and ONNX Runtime on the GPU. Compressed, it is 0.98 GB larger than the published 0.1.0 GPU image, by the layer sizes in the registry manifests; [#89](https://github.com/AIDroneMap/aidm/pull/89) gives the method and both sizes. Three stages use the GPU when the GPU image finds one: feature matching, densification, and the ONNX filters for sky removal and background removal. The Modal GPU test of the release workflow asserts each of the three.
 
 ### Changed
 

@@ -4,7 +4,7 @@
 
 AIDM turns aerial and ground images into georeferenced orthophotos, digital elevation models, classified point clouds and textured 3D models. It is forked from [ODX](https://github.com/WebODM/ODX) and keeps ODX's command line, options and output files, so tools that work with ODX work with AIDM.
 
-> **Status: 0.1.0, the first release.** AIDM 0.1.0 is ODX 3.8.4 packaged as AIDM. Processing and results are the same as ODX 3.8.4, and it makes no performance or accuracy claims yet. The [changelog](CHANGELOG.md) lists what changed and the [roadmap](#roadmap) shows what comes next.
+> **Status: 0.2.0.** In AIDM 0.2.0 the GPU image runs feature matching, densification and the sky and background filters on the GPU, and the release test asserts each of them. It makes no performance or accuracy claims yet. The [changelog](CHANGELOG.md) lists what changed and the [roadmap](#roadmap) shows what comes next.
 
 Documentation is at [aidronemap.dev](https://aidronemap.dev): [install and run](https://aidronemap.dev/start/install-and-run/), [hardware](https://aidronemap.dev/start/hardware/), [options](https://aidronemap.dev/engine/options/) and [outputs](https://aidronemap.dev/engine/outputs/). News and the open datasets are on [aidronemap.org](https://aidronemap.org).
 
@@ -42,23 +42,23 @@ The GPU image is tested twice: on a machine without a GPU, where it must fall ba
 AIDM runs on Linux, or anywhere Docker runs a Linux container. Pull the image:
 
 ```
-docker pull ghcr.io/aidronemap/aidm:0.1.0
+docker pull ghcr.io/aidronemap/aidm:0.2.0
 ```
 
 Put your images in a folder named `images`, for example `/home/you/datasets/project/images`, and run:
 
 ```
-docker run -ti --rm -v /home/you/datasets:/datasets ghcr.io/aidronemap/aidm:0.1.0 --project-path /datasets project
+docker run -ti --rm -v /home/you/datasets:/datasets ghcr.io/aidronemap/aidm:0.2.0 --project-path /datasets project
 ```
 
-Options are passed after the project name, for example `--dsm --orthophoto-resolution 2`. Run `docker run --rm ghcr.io/aidronemap/aidm:0.1.0 --help` for the full list. They are the same as ODX's, and every one is described in [Engine options](https://aidronemap.dev/engine/options/).
+Options are passed after the project name, for example `--dsm --orthophoto-resolution 2`. Run `docker run --rm ghcr.io/aidronemap/aidm:0.2.0 --help` for the full list. They are the same as ODX's, and every one is described in [Engine options](https://aidronemap.dev/engine/options/).
 
 ### GPU
 
 With an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed:
 
 ```
-docker run -ti --rm --gpus all -v /home/you/datasets:/datasets ghcr.io/aidronemap/aidm:0.1.0-gpu --project-path /datasets project
+docker run -ti --rm --gpus all -v /home/you/datasets:/datasets ghcr.io/aidronemap/aidm:0.2.0-gpu --project-path /datasets project
 ```
 
 Without `--gpus`, or on a machine without an NVIDIA GPU, the GPU image processes on the CPU.
