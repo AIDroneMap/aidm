@@ -8,7 +8,8 @@
 # the same in all of them. The runners have 4 CPUs, so the engine ran with
 # max_concurrency 4, which it passes to dem2mesh. On a machine with 8 CPUs
 # the 2.5D mesh came out different, so a runner with another CPU count may
-# need new hashes.
+# need new hashes. Strict dry run 41030223058 found that
+# opensfm/stats/dsm.png follows the runner's CPU, so it left the list.
 88709d5b86de8375edff0e1f2e5724abd313a9d83836435c43ba873608387e8b  odm_dem/dsm.preview.tif.aux.xml
 75cf1abe688083c6c1d843e8c927f8303c9c067a62f8a8b26e41721da3c75d92  odm_dem/dsm.tif
 0159705dff378365a92fb0c49476c4b4ce554ba624b94e7b1337b070fd25fdb4  odm_filterpoints/point_cloud.ply
@@ -22,7 +23,6 @@ a694edf7846ce60fde4f6e8973c68b9ffa1ecf32c8cf70bf5f520eb35057b555  odm_georeferen
 3289622428f5937bb1ea1c6d2277122468fdd5e76d5227c2d119e50df839b2fe  odm_orthophoto/odm_orthophoto_extent.dxf
 81eab4c48c35240ca1987c33375707e13201e32f871dc08572678dc92c9dee44  odm_report/camera_mappings.npz
 430fdde16d832bba01dadd27d603078ed6f3c3aedd014257bef5469bbc8a5bb6  odm_report/shots.geojson
-e2ac49865287013c25a8b8820e7b67c9c32bb6ac7cc00eea3ed1b50bc85b9847  opensfm/stats/dsm.png
 8012f928c67b1db0ac7b18a36356bfbaf907b3ccf12847251e46128b8b68c80d  opensfm/stats/dsm.png.aux.xml
 93d9ce737e2f5aa8819e625c0108227c81d432e415c737e59ddf8577366a680d  opensfm/stats/dsm_gradient.png
 8d8d7cd1f7f52523d5e8899a5f44954556670127fd16e725093edc8c86853855  opensfm/stats/ortho.png.aux.xml

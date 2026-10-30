@@ -47,6 +47,7 @@ NOT_STABLE = "Not byte-stable between two runs from the same golden input"
 # diagnostic of #82: two runs from the same golden input on a scratch
 # machine, and two runs in each build job of release dry run 41016730652.
 # The runners and the scratch machine found the same outputs not stable.
+# Release dry run 41030223058 ran on another CPU model and found one more.
 LEFT_OUT = [
     ("images.json", INPUT),
     ("cameras.json", INPUT),
@@ -80,6 +81,9 @@ LEFT_OUT = [
     ("odm_orthophoto/odm_orthophoto.original.tif", NOT_STABLE + ": rendered from the textured 2.5D model."),
     ("odm_orthophoto/odm_orthophoto_log.txt", NOT_STABLE + ": GDAL_CACHEMAX follows the free memory."),
     ("opensfm/stats/ortho.png", NOT_STABLE + ": a preview of the orthophoto."),
+    ("opensfm/stats/dsm.png", "A rendered preview of the DSM whose bytes depend on the runner's CPU: "
+     "equal on two Intel Xeon runners, different on an AMD EPYC runner. odm_dem/dsm.tif, the DSM it "
+     "is drawn from, is compared."),
     ("odm_dem/dsm.original.tif", NOT_STABLE + ": same pixels and tags in both runs, but the "
      "bytes are laid out in another order. odm_dem/dsm.tif, cropped from it, is compared."),
     ("odm_georeferencing/odm_georeferenced_model.bounds.gpkg", NOT_STABLE + ": the GeoPackage "
