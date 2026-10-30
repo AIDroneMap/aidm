@@ -252,5 +252,51 @@ class TestCheckMatcher(unittest.TestCase):
                                  ["feature matching fell back to the CPU: " + line.strip()])
 
 
+# Lines of the background removal run as modules/log.py prints them: a color
+# code, "[LEVEL] ", the message, the reset code. The provider line comes from
+# modules/bgfilter.py, the others from stages/dataset.py and modules/ai.py.
+BG_START = ("\x1b[39m[INFO] Automatically generating background masks for 32 images\x1b[0m\n"
+            "\x1b[39m[INFO] Downloading AI model from "
+            "https://github.com/WebODM/ODX/releases/download/v3.7.1/u2net.zip ...\x1b[0m\n")
+BG_LOADING = "\x1b[39m[INFO]  -> Loading the model\x1b[0m\n"
+BG_CUDA = "\x1b[39m[INFO] Background removal: ONNX Runtime provider CUDAExecutionProvider\x1b[0m\n"
+BG_CPU = "\x1b[39m[INFO] Background removal: ONNX Runtime provider CPUExecutionProvider\x1b[0m\n"
+BG_DONE = "\x1b[39m[INFO] Background masks generation completed!\x1b[0m\n"
+# What stages/dataset.py writes when modules/ai.py returns no model. The
+# "Cannot download" warning before it is left out: its text is the network error.
+BG_NO_MODEL = ("\x1b[93m[WARNING] Cannot load AI model "
+               "(you might need to be connected to the internet?)\x1b[0m\n")
+BG_LOG = BG_START + BG_LOADING + BG_CUDA + BG_DONE
+BG_MISSING = "the background removal run did not log 'Background removal: ONNX Runtime provider CUDAExecutionProvider'"
+
+
+class TestCheckBgRemoval(unittest.TestCase):
+    """The second run ran background removal on the GPU (ADR 0003)."""
+
+    def test_cuda_provider(self):
+        self.assertEqual(gpu_smoke.check_bg_removal_log(0, BG_LOG), [])
+
+    def test_cpu_provider(self):
+        text = BG_LOG.replace(BG_CUDA, BG_CPU)
+        self.assertEqual(gpu_smoke.check_bg_removal_log(0, text),
+                         ["background removal did not run on the GPU: " + BG_CPU.strip()])
+
+    def test_model_download_failure(self):
+        # Without a model the engine creates no session, so no provider line
+        text = BG_START + BG_NO_MODEL
+        self.assertEqual(gpu_smoke.check_bg_removal_log(0, text), [
+            "the background removal run could not load the model: " + BG_NO_MODEL.strip(),
+            BG_MISSING,
+        ])
+
+    def test_provider_line_missing(self):
+        text = BG_LOG.replace(BG_CUDA, "")
+        self.assertEqual(gpu_smoke.check_bg_removal_log(0, text), [BG_MISSING])
+
+    def test_nonzero_exit(self):
+        self.assertEqual(gpu_smoke.check_bg_removal_log(1, BG_LOG),
+                         ["the background removal run exited with code 1"])
+
+
 if __name__ == "__main__":
     unittest.main()

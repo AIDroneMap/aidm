@@ -11,6 +11,10 @@
 #   - the outputs listed in scripts/smoke-test.conf exist and are not empty;
 #   - the orthophoto is georeferenced where the images were taken
 #     (scripts/check-georeferencing.py, run in the Sandbox).
+# After those checks it runs the engine a second time on the same images, in
+# its own project folder, with --bg-removal --end-with dataset, and checks
+# that the run exited 0, loaded the background removal model and ran it on
+# the GPU (the CUDA provider of ONNX Runtime).
 # It prints the engine log, the GPU, the driver, the wall time and a cost
 # estimate, and exits non-zero on any failure.
 #
@@ -58,6 +62,10 @@ GEOREF_CHECK = os.path.join(HERE, "check-georeferencing.py")
 
 APP_NAME = "aidm-gpu-smoke"
 PROJECT = "/datasets/project"
+# The second run has its own project folder, so the main run's folder and
+# outputs stay as they are
+BG_PROJECT = "/datasets/bg-removal"
+BG_OPTIONS = ["--bg-removal", "--end-with", "dataset"]
 ENGINE = ["/usr/bin/python3", "/code/run.py"]
 
 # Modal list prices in USD per second, from https://modal.com/pricing
@@ -134,6 +142,43 @@ def check_engine_log(text):
 
     if any("OpenMVS failed with GPU" in l for l in lines):
         problems.append("OpenMVS failed on the GPU and fell back to the CPU")
+
+    return problems
+
+
+# Background removal on the GPU (ADR 0003). The provider line comes from
+# modules/bgfilter.py, which logs the provider its ONNX Runtime session chose.
+# The model failure line comes from stages/dataset.py.
+BG_PROVIDER = "Background removal: ONNX Runtime provider "
+BG_GPU_PROVIDER = "CUDAExecutionProvider"
+BG_MODEL_FAILURE = "Cannot load AI model"
+
+
+def check_bg_removal_log(code, text):
+    """Return a list of reasons why the background removal run does not prove
+    that the ONNX filters run on the GPU.
+
+    code is the exit code of the run. An empty list means the run exited 0,
+    loaded the model and created its session with the CUDA provider.
+    """
+    lines = text.splitlines()
+    problems = []
+
+    if code != 0:
+        problems.append("the background removal run exited with code %s" % code)
+
+    for l in lines:
+        if BG_MODEL_FAILURE in l:
+            problems.append("the background removal run could not load the model: %s" % l.strip())
+
+    provider_lines = [l for l in lines if BG_PROVIDER in l]
+    if not provider_lines:
+        problems.append("the background removal run did not log '%s%s'" % (BG_PROVIDER, BG_GPU_PROVIDER))
+    for l in provider_lines:
+        # The line ends with the provider name, then the color reset code
+        match = re.search(re.escape(BG_PROVIDER) + r"(\w+)", l)
+        if not match or match.group(1) != BG_GPU_PROVIDER:
+            problems.append("background removal did not run on the GPU: %s" % l.strip())
 
     return problems
 
@@ -293,6 +338,7 @@ def main():
     problems = []
     sandbox_seconds = 0.0
     engine_seconds = 0.0
+    bg_seconds = 0.0
 
     smi = ""
 
@@ -356,6 +402,25 @@ def main():
             code, _ = run(sb, "%s -I /tmp/check-georeferencing.py %s" % (ENGINE[0], PROJECT))
             if code != 0:
                 problems.append("the orthophoto is not georeferenced where the images were taken")
+
+            # Second run: the ONNX filters on the GPU (ADR 0003). The engine
+            # only reads the images of the main run, so the uploaded images
+            # are copied from its images folder by name.
+            uploaded = ["%s/images/%s" % (PROJECT, os.path.basename(p)) for p in images]
+            code, _ = run(sb, "mkdir -p %s/images && cp -- %s %s/images/"
+                              % (shlex.quote(BG_PROJECT), " ".join(shlex.quote(p) for p in uploaded),
+                                 shlex.quote(BG_PROJECT)))
+            if code != 0:
+                problems.append("could not copy the images to %s (exit code %s)" % (BG_PROJECT, code))
+            else:
+                cmd = ENGINE + ["--project-path", os.path.dirname(BG_PROJECT), os.path.basename(BG_PROJECT)]
+                cmd += BG_OPTIONS + ["--max-concurrency", str(max(1, int(cpu)))]
+                log("Running %s" % " ".join(shlex.quote(c) for c in cmd))
+                bg_started = time.monotonic()
+                code, bg_log = run(sb, "exec " + " ".join(shlex.quote(c) for c in cmd))
+                bg_seconds = time.monotonic() - bg_started
+                log("The background removal run exited with code %s" % code)
+                problems += check_bg_removal_log(code, bg_log)
         finally:
             sb.terminate()
             sandbox_seconds = time.monotonic() - started
@@ -363,7 +428,8 @@ def main():
 
     gpu_line = smi.strip().splitlines()[0] if smi.strip() else "unknown"
     log("GPU: %s" % gpu_line)
-    log("Engine time %d s, Sandbox time %d s" % (engine_seconds, sandbox_seconds))
+    log("Engine time %d s, background removal run %d s, Sandbox time %d s"
+        % (engine_seconds, bg_seconds, sandbox_seconds))
     if gpu in GPU_PRICES:
         per_second = GPU_PRICES[gpu] + cpu * CPU_PRICE + memory / 1024 * MEMORY_PRICE
         log("Estimated cost: USD %.2f (list prices x Sandbox time, image build not included)"
@@ -373,7 +439,7 @@ def main():
         for p in problems:
             log("FAIL: %s" % p)
         return 1
-    log("PASS: the engine ran on the GPU and produced every output")
+    log("PASS: the engine ran on the GPU, produced every output and ran background removal on the GPU")
     return 0
 
 
