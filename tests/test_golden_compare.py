@@ -52,7 +52,7 @@ def read_conf(path):
 FILES = {
     "odm_dem/dsm.tif": b"dsm",
     "odm_orthophoto/odm_orthophoto.tfw": b"tfw",
-    "odm_report/shots.geojson": b"shots",
+    "odm_report/camera_mappings.npz": b"shots",
     "opensfm/stats/overlap.png": b"overlap",
 }
 
@@ -96,10 +96,10 @@ class TestCompareScript(unittest.TestCase):
         ])
 
     def test_missing_file(self):
-        os.remove(os.path.join(self.project, "odm_report", "shots.geojson"))
+        os.remove(os.path.join(self.project, "odm_report", "camera_mappings.npz"))
         code, out = self.run_compare(self.project, self.list)
         self.assertEqual(code, 1, out)
-        self.assertIn("| `odm_report/shots.geojson` | %s | missing |" % sha(b"shots"), out)
+        self.assertIn("| `odm_report/camera_mappings.npz` | %s | missing |" % sha(b"shots"), out)
         self.assertIn("1 file differs", out)
 
     def test_extra_file(self):
@@ -198,6 +198,8 @@ class TestLeftOut(unittest.TestCase):
                 self.assertTrue(reason.strip())
 
     def test_the_outputs_that_matter_are_compared(self):
+        for path in ("odm_report/shots.geojson", "opensfm/stats/dsm.png"):
+            self.assertTrue(golden.left_out(path), path)
         for path in ("odm_dem/dsm.tif",
                      "odm_filterpoints/point_cloud.ply",
                      "odm_georeferencing/odm_georeferenced_model.laz",
@@ -269,7 +271,7 @@ GOLDEN_INPUT = {
 }
 OUTPUTS = {
     "odm_dem/dsm.tif": "dsm",
-    "odm_report/shots.geojson": "shots",
+    "odm_report/camera_mappings.npz": "shots",
 }
 
 
@@ -360,7 +362,7 @@ class TestGoldenMode(unittest.TestCase):
         self.assertIn("the 2 golden outputs in amd64.txt match", self.read_report())
 
     def test_changed_output_fails_with_the_report(self):
-        code, out = self.run_script(FAKE_OUTPUTS="odm_dem/dsm.tif=other odm_report/shots.geojson=shots")
+        code, out = self.run_script(FAKE_OUTPUTS="odm_dem/dsm.tif=other odm_report/camera_mappings.npz=shots")
         self.assertEqual(code, 1, out)
         self.assertIn("the outputs differ from", out)
         self.assertIn("| `odm_dem/dsm.tif` | %s | %s |" % (sha(b"dsm"), sha(b"other")), self.read_report())
@@ -368,7 +370,7 @@ class TestGoldenMode(unittest.TestCase):
     def test_missing_output_fails(self):
         code, out = self.run_script(FAKE_OUTPUTS="odm_dem/dsm.tif=dsm")
         self.assertEqual(code, 1, out)
-        self.assertIn("| `odm_report/shots.geojson` | %s | missing |" % sha(b"shots"), self.read_report())
+        self.assertIn("| `odm_report/camera_mappings.npz` | %s | missing |" % sha(b"shots"), self.read_report())
 
     def test_list_follows_the_image_architecture(self):
         write_list(os.path.join(self.hashes, "arm64.txt"), {"odm_dem/dsm.tif": sha(b"dsm")})
@@ -411,7 +413,7 @@ class TestGoldenMode(unittest.TestCase):
 
     def test_diagnostic_runs_twice_and_passes_on_differences(self):
         code, out = self.run_script(GOLDEN_DIAGNOSTIC="1",
-                                    FAKE_OUTPUTS="odm_dem/dsm.tif=dsm odm_report/shots.geojson={run}")
+                                    FAKE_OUTPUTS="odm_dem/dsm.tif=dsm odm_report/camera_mappings.npz={run}")
         self.assertEqual(code, 0, out)
         engine = self.engine_calls()
         self.assertEqual(len(engine), 2)
@@ -422,16 +424,16 @@ class TestGoldenMode(unittest.TestCase):
             every, hash_list = text.split("Hash list of run " + run)
             # Every file, the golden input too
             self.assertIn("%s  images.json" % sha(b"[]"), every)
-            self.assertIn("%s  odm_report/shots.geojson" % sha(run.encode()), every)
+            self.assertIn("%s  odm_report/camera_mappings.npz" % sha(run.encode()), every)
             # The hash list leaves out the golden input
             hash_list = hash_list.split("[smoke]")[0]
             self.assertEqual(hash_list.strip().splitlines(), [
                 "%s  odm_dem/dsm.tif" % sha(b"dsm"),
-                "%s  odm_report/shots.geojson" % sha(run.encode()),
+                "%s  odm_report/camera_mappings.npz" % sha(run.encode()),
             ])
         diff = out.split("Lines that differ between run 1 (<) and run 2 (>)")[1]
-        self.assertIn("< %s  odm_report/shots.geojson" % sha(b"1"), diff)
-        self.assertIn("> %s  odm_report/shots.geojson" % sha(b"2"), diff)
+        self.assertIn("< %s  odm_report/camera_mappings.npz" % sha(b"1"), diff)
+        self.assertIn("> %s  odm_report/camera_mappings.npz" % sha(b"2"), diff)
         self.assertNotIn("odm_dem/dsm.tif", diff)
         self.assertFalse(os.path.exists(self.report))
 
