@@ -192,6 +192,16 @@ installreqs() {
     pip install --ignore-installed numpy==2.3.2 --break-system-packages
     pip install --ignore-installed -r requirements.txt --break-system-packages
 
+    # The GPU image sets GPU_REQUIREMENTS to requirements-gpu.txt, which
+    # replaces the CPU wheel of ONNX Runtime with the GPU wheel. Both wheels
+    # install the onnxruntime module, so the CPU wheel goes first. --no-deps:
+    # the GPU wheel needs the same packages as the CPU wheel, already installed,
+    # and the CUDA and cuDNN libraries come from the base image, not from pip.
+    if [ ! -z "$GPU_REQUIREMENTS" ]; then
+        pip uninstall -y onnxruntime --break-system-packages
+        pip install --no-deps -r "$GPU_REQUIREMENTS" --break-system-packages
+    fi
+
     set +e
 }
 

@@ -1,8 +1,9 @@
 # Layer order. The builder stage first copies only the files the SuperBuild
-# step reads, which are configure.sh, requirements.txt, docker/ and SuperBuild/.
-# It compiles the C++ dependencies, then copies the rest of the repository.
-# A change to Python code, tests or docs leaves the SuperBuild layer cached.
-# A change to one of those four inputs rebuilds from the SuperBuild step on.
+# step reads, which are configure.sh, requirements.txt, requirements-gpu.txt,
+# docker/ and SuperBuild/. It compiles the C++ dependencies, then copies the
+# rest of the repository. A change to Python code, tests or docs leaves the
+# SuperBuild layer cached. A change to one of those five inputs rebuilds from
+# the SuperBuild step on.
 # WORKDIR comes after the SuperBuild step on purpose. The release workflow
 # sets SOURCE_DATE_EPOCH to the commit time, and BuildKit includes it in
 # the cache key of WORKDIR, so a WORKDIR before the build would rebuild
@@ -21,7 +22,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Copy only the inputs of the SuperBuild step, so that other changes do not
 # invalidate it. These steps create /code. WORKDIR comes later, see the top.
-COPY configure.sh requirements.txt /code/
+COPY configure.sh requirements.txt requirements-gpu.txt /code/
 COPY docker/ /code/docker/
 COPY SuperBuild/ /code/SuperBuild/
 
@@ -29,8 +30,10 @@ COPY SuperBuild/ /code/SuperBuild/
 # layer holds only the installed files, not the sources and build trees.
 # Compile for the AIDM CPU target (x86-64-v3 or armv8.2-a), not for the
 # CPU of the build machine. See docker/README.
+# GPU_REQUIREMENTS installs the GPU wheel of ONNX Runtime in place of the
+# CPU wheel that requirements.txt pins.
 RUN cd /code \
-  && CPU_TARGET_INSTALL=YES bash configure.sh install \
+  && CPU_TARGET_INSTALL=YES GPU_REQUIREMENTS=requirements-gpu.txt bash configure.sh install \
   && bash configure.sh clean
 
 # Copy everything else
@@ -40,8 +43,9 @@ COPY . ./
 ### END Builder
 
 ### Use a second image for the final asset to reduce the number and
-# size of the layers.
-FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04@sha256:1287141d283b8f06f45681b56a48a85791398c615888b1f96bfb9fc981392d98
+# size of the layers. The cudnn-runtime tag adds cuDNN 9, which the CUDA
+# provider of ONNX Runtime loads.
+FROM nvidia/cuda:12.9.1-cudnn-runtime-ubuntu24.04@sha256:d02c4310b6d57ca0b16cd80298bdb33a74187baafe2eccd8a6a16180ddc90802
 
 # Image metadata. Keep the version equal to the VERSION file.
 LABEL org.opencontainers.image.source="https://github.com/AIDroneMap/aidm" \
@@ -81,13 +85,18 @@ RUN mkdir -p /usr/local/lib/aidm-cuda-stub \
 # Install shared libraries that we depend on via APT, but *not*
 # the -dev packages to save space!
 # Also run a smoke test on AIDM and OpenSfM, and check that OpenMVS
-# can find all its shared libraries without a GPU
+# can find all its shared libraries without a GPU. Then check that only the
+# GPU wheel of ONNX Runtime is installed, that it offers the CUDA provider,
+# and that the CUDA provider finds all its shared libraries, cuDNN included.
 RUN bash configure.sh installruntimedeps \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
   && bash run.sh --help \
   && bash -c "eval $(python3 /code/modules/context.py) && python3 -c 'from opensfm import io, pymap'" \
-  && ! ldd /code/SuperBuild/install/bin/OpenMVS/DensifyPointCloud | grep "not found"
+  && ! ldd /code/SuperBuild/install/bin/OpenMVS/DensifyPointCloud | grep "not found" \
+  && python3 -c "import importlib.metadata as m, onnxruntime as o; names = {(d.metadata['Name'] or '').lower().replace('_', '-') for d in m.distributions()}; assert 'onnxruntime' not in names, 'CPU wheel installed'; assert 'onnxruntime-gpu' in names, 'GPU wheel missing'; assert 'CUDAExecutionProvider' in o.get_available_providers()" \
+  && test -f /usr/local/lib/python3.12/dist-packages/onnxruntime/capi/libonnxruntime_providers_cuda.so \
+  && ! ldd /usr/local/lib/python3.12/dist-packages/onnxruntime/capi/libonnxruntime_providers_cuda.so | grep "not found"
 
 # Entry point
 ENTRYPOINT ["python3", "/code/run.py"]
