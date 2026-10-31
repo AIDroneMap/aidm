@@ -75,6 +75,13 @@ class TestVersion(unittest.TestCase):
             labels = re.findall(r'org\.opencontainers\.image\.version="([^"]+)"', read(dockerfile))
             self.assertEqual(labels, [log.get_version()], dockerfile)
 
+    def test_image_examples_match_version(self):
+        # The README and the smoke script usage show the engine image by tag
+        for name in ["README.md", "scripts/smoke-test.sh"]:
+            tags = re.findall(r"ghcr\.io/aidronemap/aidm:(\d+\.\d+\.\d+)", read(name))
+            self.assertTrue(tags, name)
+            self.assertEqual(set(tags), {log.get_version()}, name)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -49,7 +49,7 @@ FROM nvidia/cuda:12.9.1-cudnn-runtime-ubuntu24.04@sha256:d02c4310b6d57ca0b16cd80
 
 # Image metadata. Keep the version equal to the VERSION file.
 LABEL org.opencontainers.image.source="https://github.com/AIDroneMap/aidm" \
-      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.version="0.2.0" \
       org.opencontainers.image.licenses="AGPL-3.0" \
       org.opencontainers.image.title="AIDM GPU" \
       org.opencontainers.image.description="Photogrammetry engine that turns drone images into orthophotos, elevation models, point clouds and textured 3D models, with NVIDIA CUDA support. Based on ODX."

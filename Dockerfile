@@ -45,7 +45,7 @@ FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce
 
 # Image metadata. Keep the version equal to the VERSION file.
 LABEL org.opencontainers.image.source="https://github.com/AIDroneMap/aidm" \
-      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.version="0.2.0" \
       org.opencontainers.image.licenses="AGPL-3.0" \
       org.opencontainers.image.title="AIDM" \
       org.opencontainers.image.description="Photogrammetry engine that turns drone images into orthophotos, elevation models, point clouds and textured 3D models. Based on ODX."
