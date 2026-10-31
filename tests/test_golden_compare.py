@@ -198,12 +198,13 @@ class TestLeftOut(unittest.TestCase):
                 self.assertTrue(reason.strip())
 
     def test_the_outputs_that_matter_are_compared(self):
-        for path in ("odm_report/shots.geojson", "opensfm/stats/dsm.png"):
+        for path in ("odm_report/shots.geojson", "opensfm/stats/dsm.png",
+                     "odm_meshing/odm_25dmesh.ply", "odm_meshing/odm_25dmesh.mvs"):
             self.assertTrue(golden.left_out(path), path)
         for path in ("odm_dem/dsm.tif",
                      "odm_filterpoints/point_cloud.ply",
                      "odm_georeferencing/odm_georeferenced_model.laz",
-                     "odm_meshing/odm_25dmesh.ply"):
+                     "odm_orthophoto/odm_orthophoto.tfw"):
             self.assertFalse(golden.left_out(path), path)
 
 

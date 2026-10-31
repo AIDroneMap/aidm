@@ -11,7 +11,10 @@
 # need new hashes. Dry runs 41030223058 and 41045655132 found that the
 # bytes of opensfm/stats/dsm.png and odm_report/shots.geojson follow the
 # runner's CPU, so both left the list.
-# The 20 outputs below matched on the arm64 runners of runs 41016730652,
+# Dry run 41143023295 found that the bytes of the 2.5D mesh
+# (odm_meshing/odm_25dmesh.ply and .mvs) changed between runs on the same
+# CPU model, so it left the list.
+# The 18 outputs below matched on the arm64 runners of runs 41016730652,
 # 41030223058 and 41045655132.
 88709d5b86de8375edff0e1f2e5724abd313a9d83836435c43ba873608387e8b  odm_dem/dsm.preview.tif.aux.xml
 75cf1abe688083c6c1d843e8c927f8303c9c067a62f8a8b26e41721da3c75d92  odm_dem/dsm.tif
@@ -19,8 +22,6 @@
 a390a62284c4060bdac396aac7f6937e71ebccd02c75fe28ddad7d41747b660b  odm_filterpoints/point_cloud_stats.json
 33031bb79a61f07b4525a282e0af8f0d13bc4eb1e786118aa4a4fad64b7c885d  odm_georeferencing/odm_georeferenced_model.bounds.geojson
 a694edf7846ce60fde4f6e8973c68b9ffa1ecf32c8cf70bf5f520eb35057b555  odm_georeferencing/odm_georeferenced_model.laz
-732c5ad14c8538583b72fbfb2082e837f26f801f1ab29c35c4256349969e9fcd  odm_meshing/odm_25dmesh.mvs
-4a5431085b0139a1b3d14e4d1e1ee88e7e46b5cedd8d942aa5ac1f01d3942dde  odm_meshing/odm_25dmesh.ply
 53c77083731ab2b3423580381b8a6e2bbc0c233d9ff31526af87b03a48fb733d  odm_orthophoto/odm_orthophoto.tfw
 698de2c8aea294bfc2e52eed4a27928491bd80f4976950e6948169927f929c30  odm_orthophoto/odm_orthophoto_corners.txt
 3289622428f5937bb1ea1c6d2277122468fdd5e76d5227c2d119e50df839b2fe  odm_orthophoto/odm_orthophoto_extent.dxf
