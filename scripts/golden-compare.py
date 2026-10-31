@@ -49,6 +49,8 @@ NOT_STABLE = "Not byte-stable between two runs from the same golden input"
 # The runners and the scratch machine found the same outputs not stable.
 # Release dry runs 41030223058 and 41045655132 ran on other CPU models and
 # found two more.
+# Release dry run 41143023295 found the 2.5D mesh not stable on a CPU model
+# where the diagnostic had found it stable.
 LEFT_OUT = [
     ("images.json", INPUT),
     ("cameras.json", INPUT),
@@ -75,9 +77,13 @@ LEFT_OUT = [
     ("options.json", "Records max_concurrency, which defaults to the CPU count of the machine."),
     ("odm_meshing/odm_mesh.ply", NOT_STABLE + ": the 3D mesh has a different number of vertices."),
     ("odm_meshing/odm_mesh.mvs", NOT_STABLE + ": the scene of the 3D mesh."),
+    ("odm_meshing/odm_25dmesh.ply", NOT_STABLE + ": dem2mesh builds the 2.5D mesh from blocks on "
+     "several threads, and its bytes changed between two runs on the same CPU model (run "
+     "41143023295), likely with the order of the blocks."),
+    ("odm_meshing/odm_25dmesh.mvs", NOT_STABLE + ": the scene of the 2.5D mesh."),
     ("odm_texturing/", NOT_STABLE + ": textured from the 3D mesh."),
-    ("odm_texturing_25d/", NOT_STABLE + ": the 2.5D mesh is stable, but texturing picks "
-     "other texture patches and packs another atlas."),
+    ("odm_texturing_25d/", NOT_STABLE + ": texturing picks other texture patches and packs "
+     "another atlas, even from the same 2.5D mesh."),
     ("odm_orthophoto/odm_orthophoto.tif", NOT_STABLE + ": rendered from the textured 2.5D model."),
     ("odm_orthophoto/odm_orthophoto.original.tif", NOT_STABLE + ": rendered from the textured 2.5D model."),
     ("odm_orthophoto/odm_orthophoto_log.txt", NOT_STABLE + ": GDAL_CACHEMAX follows the free memory."),
