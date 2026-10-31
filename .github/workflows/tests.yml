@@ -28,7 +28,7 @@ permissions:
 
 env:
   # Last published CPU image. Move it in its own pull request when a release ships.
-  IMAGE: ghcr.io/aidronemap/aidm:0.1.0
+  IMAGE: ghcr.io/aidronemap/aidm:0.2.0
 
 jobs:
   unit:
