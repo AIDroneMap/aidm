@@ -21,6 +21,9 @@
 # The build cache is written only by the nightly and by runs that publish.
 # A dry run reads it and never writes it, so the cache always matches master
 # as of the last nightly.
+# Start the nightly by hand, on master only:
+#   gh workflow run release.yml --ref master -f nightly=true
+# It does exactly what the scheduled run does.
 # Publish again from an existing tag, for example after a failed run:
 #   gh workflow run release.yml --ref v0.1.0 -f publish=true
 #
@@ -72,15 +75,19 @@ on:
         description: Dry runs only. Also produce the golden input in the cpu-amd64 job and upload it as an artifact.
         type: boolean
         default: false
+      nightly:
+        description: Run the nightly by hand. Needs the master ref. Never with publish.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
-# One publishing run per tag and one nightly, never cancelled. A new dry run
-# cancels an older one on the same ref.
+# One publishing run per tag and one nightly, scheduled or by hand, never
+# cancelled. A new dry run cancels an older one on the same ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ (github.event_name == 'push' || inputs.publish) && 'publish' || (github.event_name == 'schedule' && 'nightly' || 'dry-run') }}-${{ github.ref }}
-  cancel-in-progress: ${{ !(github.event_name == 'push' || inputs.publish || github.event_name == 'schedule') }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'push' || inputs.publish) && 'publish' || ((github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly && github.ref == 'refs/heads/master' && !inputs.publish)) && 'nightly' || 'dry-run') }}-${{ github.ref }}
+  cancel-in-progress: ${{ !(github.event_name == 'push' || inputs.publish || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly && github.ref == 'refs/heads/master' && !inputs.publish)) }}
 
 env:
   IMAGE: ghcr.io/aidronemap/aidm
@@ -95,7 +102,7 @@ jobs:
   # oldest first, and hands the new master commit to the other jobs.
   nightly-merge:
     name: Merge ready build changes
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly && github.ref == 'refs/heads/master' && !inputs.publish)
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -110,7 +117,7 @@ jobs:
       sha: ${{ steps.merge.outputs.sha }}
       merged: ${{ steps.merge.outputs.merged }}
     steps:
-      # master as of the schedule, which holds scripts/nightly-merge.py
+      # master as of the start of the run, which holds scripts/nightly-merge.py
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -152,11 +159,23 @@ jobs:
         id: version
         env:
           PUBLISH_INPUT: ${{ inputs.publish }}
+          NIGHTLY_INPUT: ${{ inputs.nightly }}
         run: |
           version=$(head -n 1 VERSION | tr -d '[:space:]')
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::VERSION must look like 1.2.3, found '$version'"
             exit 1
+          fi
+
+          if [ "$NIGHTLY_INPUT" = "true" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/master" ]; then
+              echo "::error::The nightly runs on master only. Run: gh workflow run release.yml --ref master -f nightly=true"
+              exit 1
+            fi
+            if [ "$PUBLISH_INPUT" = "true" ]; then
+              echo "::error::The nightly never publishes. Run: gh workflow run release.yml --ref master -f nightly=true"
+              exit 1
+            fi
           fi
 
           publish=false
@@ -177,7 +196,7 @@ jobs:
           mode=dry-run
           if [ "$publish" = "true" ]; then
             mode=publish
-          elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+          elif [ "$GITHUB_EVENT_NAME" = "schedule" ] || { [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$NIGHTLY_INPUT" = "true" ] && [ "$GITHUB_REF" = "refs/heads/master" ]; }; then
             mode=nightly
           fi
 
@@ -576,7 +595,7 @@ jobs:
   nightly-report:
     name: Report a failed nightly
     needs: [nightly-merge, check, build, gpu-test]
-    if: github.event_name == 'schedule' && failure()
+    if: (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly && github.ref == 'refs/heads/master' && !inputs.publish)) && failure()
     # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
     runs-on: ubuntu-24.04
     timeout-minutes: 10
