@@ -103,7 +103,7 @@ The Linux smoke test does not change.
 
 ### 10. The gate's removal and the rule files
 
-The last workflow ticket removes the input gate and `continue-on-error`, adds `configure.py` to the build inputs in `AGENTS.md` and in the nightly merge script's list, replaces the `README.md` sentence that says there is no native Windows build with the two archives and the minimum machine, and writes the changelog entry that credits the inherited Windows build path of the reference project and says the Windows files were written again. `AGENTS.md`'s line about `configure.py` changes in the probe ticket, the first pull request that edits the script.
+A pull request that touches `.github/` changes nothing else and lands alone, so every workflow change in this spec is its own pull request, ordered after the pull request that gives it something to run. The gate's removal is one such pull request: it removes the input gate and `continue-on-error` and makes the `release` job attach the archives. A documentation pull request follows it: `configure.py` joins the build inputs in `AGENTS.md` and in the nightly merge script's list, the `README.md` sentence that says there is no native Windows build gives way to the two archives and the minimum machine, and the changelog entry credits the inherited Windows build path of the reference project and says the Windows files were written again. `AGENTS.md`'s line about `configure.py` changes in the first pull request that edits the script, which is not a workflow pull request.
 
 ### 11. Versions and the release
 
@@ -119,20 +119,25 @@ The low seam is the package layout function of decision 7, tested on Linux again
 
 The rule: anything that must hold about files under `SuperBuild/` fails the build itself, with a message that names the file, because the unit tests in CI run inside the last published image and see that release's copy of those files.
 
-Every ticket that touches `SuperBuild/`, `requirements.txt`, `configure.py` or `release.yml` is `full`, with at most two dry runs per pull request, one per head commit, and the three-runs limit shared with the nightly. A pull request that changes `release.yml` or anything under `scripts/` is CI code: the maintainer starts its dry run and the review loop hands it to the maintainer. While the gate holds, every dry run that should exercise a Windows job is started with the input `windows` set to true. Tools that compile first time collapse into one ticket; a tool that fails gets its own.
+Every ticket that touches `SuperBuild/`, `requirements.txt`, `configure.py` or `release.yml` is `full`, with at most two dry runs per pull request, one per head commit, and the three-runs limit shared with the nightly. A pull request that changes `release.yml` or anything under `scripts/` is CI code: the maintainer starts its dry run and the review loop hands it to the maintainer. A pull request that touches `.github/` changes nothing else and lands alone, so each workflow change below is its own row, ordered after the row that gives it something to run. While the gate holds, every dry run that should exercise a Windows job is started with the input `windows` set to true. Tools that compile first time collapse into one ticket; a tool that fails gets its own.
 
 | Ticket | Depth | Dry runs | Who starts the dry run | Needs |
 | --- | --- | --- | --- | --- |
-| Probe: the deps pin file, `configure.py` downloads by hash, the gated `windows-x64` job with `continue-on-error`, the toolchain and triplet from the export, `/arch:AVX2`, the `AGENTS.md` line about `configure.py`; its dry run is read, not fixed | full | 1 | maintainer (CI code) | the deps release; the pin approved |
+| Probe, part one: the deps pin file, `configure.py` downloads by hash, the toolchain and triplet from the export, `/arch:AVX2`, the `AGENTS.md` line about `configure.py`. Its dry run shows the Linux images unchanged; nothing runs it on Windows yet | full | 1 | the builder | the deps release; the pin approved |
+| Probe, part two: the gated `windows-x64` job with `continue-on-error` that runs `configure.py build`, workflow only. Its dry run with the input set is read, not fixed | full | 1 | maintainer (CI code) | part one merged |
 | One ticket per tool that fails on MSVC, in the order the probe's log shows them; tools that compile first time collapse into one | full | 1, at most 2 | the builder | the probe's log |
 | Obj2Tiles from its pinned source with the .NET SDK | full | 1 | the builder | |
 | GDAL, PROJ and PDAL from the export: headers and import library, the wheel installed by `configure.py`, the `share` folders, the Windows GDAL line removed from `requirements.txt` | full | 1, at most 2 | the builder | |
 | Python in the package: the embeddable package, the `._pth` edit, the wheels into its site-packages | full | 1, at most 2 | the builder | |
-| `run.bat`, `win32env.bat`, the model folder change with its unit test, the package layout function with its unit tests, `configure.py package` and `clean`, the archive as a dry-run artifact | full | 1 | the builder | |
-| The Windows smoke test with its unit tests, the API zip pin in `smoke-test.conf`, run by the CPU job | full | 1 | maintainer (CI code) | the last released API zip |
-| The CPU variant without CUDA and the `windows-x64-cuda` job with the CUDA installer, the build-time DLL checks, the start check | full | 1, at most 2 | maintainer (CI code) | |
+| `run.bat`, `win32env.bat`, the model folder change with its unit test, the package layout function with its unit tests, `configure.py package` and `clean` | full | 1 | the builder | |
+| The package step in the job and the archive as a dry-run artifact, workflow only | full | 1 | maintainer (CI code) | the package step merged |
+| The Windows smoke test with its unit tests and the API zip pin in `smoke-test.conf` | full | 1 | maintainer (CI code: `scripts/`) | the last released API zip |
+| The CPU job runs the smoke test, workflow only | full | 1 | maintainer (CI code) | the smoke test merged |
+| The CPU variant without CUDA, the CUDA variant's build, the build-time DLL checks, the start mode of the smoke test | full | 1, at most 2 | maintainer (CI code: `scripts/`) | |
+| The `windows-x64-cuda` job with the CUDA installer and the start check, workflow only | full | 1, at most 2 | maintainer (CI code) | the CUDA variant merged |
 | The maintainer's hand run of the CUDA archive on the full dataset, record on the ticket | none | 0 | nobody | the Windows machine with an NVIDIA card |
-| Gate removal: jobs on every dry run and tag run, archives attached by the `release` job, `AGENTS.md` build inputs, nightly merge list, `README.md`, changelog credit | full | 1 | maintainer (CI code) | the hand run's record; the CPU job green |
+| Gate removal: jobs on every dry run and tag run, archives attached by the `release` job, workflow only | full | 1 | maintainer (CI code) | the hand run's record; the CPU job green |
+| Rule files after the gate: `configure.py` in the build inputs of `AGENTS.md` and of the nightly merge list, the `README.md` platform sentence, the changelog credit | unit (`AGENTS.md`, `README.md`, changelog) or full if the nightly merge list changes in the same pull request | 0 or 1 | maintainer if `scripts/` changes | the gate removal merged |
 | Release pull request (`VERSION` and copies, `CHANGELOG.md`) | full | 1 | maintainer (CI code), then the tag | everything above |
 
 Prior art: `tests/test_gpu_smoke_modal.py` and `tests/test_golden_compare.py` for a CI script's verdicts on recorded inputs; `tests/test_check_georeferencing.py` for the georeferencing check; `tests/test_eigen_mirror.py` for a rule about SuperBuild files, with the lesson that such a rule belongs in the build.
@@ -153,7 +158,7 @@ The hand run: the maintainer downloads the CUDA archive from a dry run's artifac
 
 ## Further notes
 
-- The probe is a pull request that merges with a red Windows job: the job is gated and `continue-on-error`, so the dry run's verdict is the Linux jobs'. Its log is the input of the per-tool tickets.
+- The probe is two pull requests. The first changes `configure.py`, the pin and the SuperBuild and is proven only in that the Linux images do not change. The second adds the gated job and merges with a red Windows job: the job is gated and `continue-on-error`, so the dry run's verdict is the Linux jobs'. Its log is the input of the per-tool tickets.
 - The OpenCV path the OpenSfM recipe expects on Windows differs from the folder the OpenCV recipe installs to. The probe will show it; it is one of the per-tool tickets.
 - The CUDA network installer is pinned by URL and hash in the workflow. It installs the compiler and the runtime; the job has no GPU and never runs a kernel.
 - The package's `python/` first on `PATH` is what the task API's Windows helper relies on. A change there is a change to the API's contract and needs its spec.
