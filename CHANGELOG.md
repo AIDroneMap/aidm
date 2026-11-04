@@ -2,6 +2,12 @@
 
 AIDM uses [Semantic Versioning](https://semver.org). AIDM started as a fork of ODX 3.8.4; since 0.2.0 a release names only its own version.
 
+## Unreleased
+
+### Added
+
+- The design of the native Windows engine for 0.3: two variants, `windows-x64` and `windows-x64-cuda`, prebuilt dependencies from a repository of the project, and one archive assembled by the task API's release ([ADR 0005](docs/adr/0005-windows-dependencies-come-from-their-own-repository.md), [ADR 0006](docs/adr/0006-two-windows-variants-and-a-driver-floor.md), [ADR 0007](docs/adr/0007-the-native-package-is-one-archive-assembled-by-the-api-release.md), [design note](docs/design/windows-engine-0.3.0.md)). Nothing is built yet: the release workflow has no Windows job and `README.md` still says so. Evidence: the documents themselves; issue #15 carries the scope.
+
 ## 0.2.0
 
 Engine 0.2.0, released on 30 October 2026, ships with aidm-api 2.7.0 and the first tag of aidm-ui. The engine reports only its own version and no longer writes an `UPSTREAM_VERSION` file. The GPU image carries cuDNN and ONNX Runtime on the GPU. Compressed, it is 0.98 GB larger than the published 0.1.0 GPU image, by the layer sizes in the registry manifests; [#89](https://github.com/AIDroneMap/aidm/pull/89) gives the method and both sizes. Three stages use the GPU when the GPU image finds one: feature matching, densification, and the ONNX filters for sky removal and background removal. The Modal GPU test of the release workflow asserts each of the three.

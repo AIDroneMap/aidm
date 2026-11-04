@@ -70,3 +70,25 @@ _Avoid_: reference output, expected output
 **Golden comparison**:
 The step that runs the engine from the golden input and compares every golden output with its stored hash.
 _Avoid_: golden test, regression test
+
+### Native packages
+
+**Native package**:
+One archive that the interface downloads, checks against the signed manifest, unpacks and starts as a process, with the task API at its root and the engine under `engine/`.
+_Avoid_: installer, bundle, portable build
+
+**Variant**:
+One published form of an engine release for one platform and one kind of processor, named by its id in the manifest, such as `windows-x64` or `windows-x64-cuda`.
+_Avoid_: flavour, edition, build type
+
+**Deps export**:
+The zip of prebuilt libraries that a release of the Windows dependencies repository publishes and the engine's Windows build pins by hash.
+_Avoid_: vcpkg cache, prebuilt libs
+
+**Engine archive**:
+The engine's own part of a native package, published by the engine's tag run, which the task API's tag run wraps into the native package.
+_Avoid_: engine package, engine zip
+
+**Driver floor**:
+The oldest NVIDIA driver version a CUDA variant runs on, named in the manifest, below which the interface installs the CPU variant.
+_Avoid_: minimum driver, driver requirement
