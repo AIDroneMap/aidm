@@ -1,6 +1,6 @@
 # Changelog
 
-AIDM uses [Semantic Versioning](https://semver.org). Each release names the ODX version it is based on.
+AIDM uses [Semantic Versioning](https://semver.org). AIDM started as a fork of ODX 3.8.4; since 0.2.0 a release names only its own version.
 
 ## 0.2.0
 

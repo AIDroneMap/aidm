@@ -4,9 +4,22 @@
 
 AIDM turns aerial and ground images into georeferenced orthophotos, digital elevation models, classified point clouds and textured 3D models. It is forked from [ODX](https://github.com/WebODM/ODX) and keeps ODX's command line, options and output files, so tools that work with ODX work with AIDM.
 
-> **Status: 0.2.0.** In AIDM 0.2.0 the GPU image runs feature matching, densification and the sky and background filters on the GPU, and the release test asserts each of them. It makes no performance or accuracy claims yet. The [changelog](CHANGELOG.md) lists what changed and the [roadmap](#roadmap) shows what comes next.
+> **Status: 0.2.0.** Engine 0.2.0 ships with [AIDM API](https://github.com/AIDroneMap/aidm-api) 2.7.0 and [AIDM UI](https://github.com/AIDroneMap/aidm-ui) 0.2.1. In 0.2.0 the GPU image runs feature matching, densification and the sky and background filters on the GPU, and the release test asserts each of them. It makes no performance or accuracy claims yet. The [changelog](CHANGELOG.md) lists what changed and the [roadmap](#roadmap) shows what comes next.
+
+**Not a command line person?** [AIDM UI](https://github.com/AIDroneMap/aidm-ui/releases/latest) is the app for pilots. On a Mac with Apple silicon it is a signed app: open it, and its setup screens install this engine and run a sample job.
 
 Documentation is at [aidronemap.dev](https://aidronemap.dev): [install and run](https://aidronemap.dev/start/install-and-run/), [hardware](https://aidronemap.dev/start/hardware/), [options](https://aidronemap.dev/engine/options/) and [outputs](https://aidronemap.dev/engine/outputs/). News and the open datasets are on [aidronemap.org](https://aidronemap.org).
+
+## Where it fits
+
+| Part | Repository | Role |
+| --- | --- | --- |
+| Engine | this repository | Turns images into maps and models |
+| Task API | [aidm-api](https://github.com/AIDroneMap/aidm-api) | Runs the engine on one machine and exposes it over HTTP |
+| Web interface | [aidm-ui](https://github.com/AIDroneMap/aidm-ui) | The operator's app: installs the engine, runs jobs, shows and exports the results |
+| Cloud layer | coming later | Spreads jobs across many machines and cloud providers |
+
+Each part works on its own, and the parts talk to each other only through the task API.
 
 ## Why AIDM
 
@@ -15,13 +28,13 @@ Drones capture more images, at higher resolution, than ever before, and processi
 - **Distributed processing.** One job spread across the CPUs and GPUs you can reach: your own machines, a cluster, or cloud capacity billed by the second that stops when the job ends.
 - **Simplicity.** One engine image, one command to run it, one URL to point a client at.
 
-AIDM is the engine only. Scheduling across machines and the connectors to cloud providers live in a separate repository, and so does the open web interface. Each piece works on its own.
+AIDM is the engine only. Scheduling across machines and the connectors to cloud providers live in a separate repository, and so does the open web interface.
 
-## What changes compared to ODX
+## Where AIDM is going
 
 Planned work, in rough order. Each item will only be claimed as done when a public benchmark shows it.
 
-- **Per-stage profiling and benchmarks** against ODX on public datasets, published with every release, covering time, memory, cost and accuracy.
+- **Per-stage profiling and benchmarks** on the open datasets, covering time, memory, cost and accuracy. The benchmark process is running: every engine and API version is measured the same way, by image digest, on a fixed container shape, on the pinned aidm-vineyard-small set, and every run is recorded. The numbers are published once the first public statement lands.
 - **Resources known before a job starts:** the engine estimates memory and CPU per stage, so a scheduler can size each machine correctly.
 - **Split-merge as the default path for large jobs:** submodels on separate machines, a parallel merge, and a report per submodel.
 - **Work that moves between machines:** stage inputs and outputs in S3-compatible storage, so a stage can resume on another machine.
@@ -29,9 +42,7 @@ Planned work, in rough order. Each item will only be claimed as done when a publ
 - **Machine-readable progress and results:** structured progress events and a result manifest with a clear status for every output.
 - **A camera test suite** with real sample files, to catch metadata bugs before users do.
 
-## Weekly releases
-
-AIDM merges the latest ODX into a test branch every week, runs the test datasets, and publishes a release labelled with the ODX commit it includes. You get ODX's fixes and ours together.
+## How releases are tested
 
 Before an image is published, the [release workflow](.github/workflows/release.yml) processes a real drone survey with each image ([`scripts/smoke-test.sh`](scripts/smoke-test.sh)). The survey is [aidm-vineyard-small](https://huggingface.co/datasets/AIDroneMap/aidm-vineyard-small): 73 RGB images from a DJI Mavic 3M, 5280 x 3956 pixels, with RTK corrected positions, licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (AIDroneMap, provided by ITALDRONI). Test runs that publish nothing, such as release dry runs and the smoke test of pull requests, process [aidm-vineyard-ci](https://github.com/AIDroneMap/aidm-data/releases/tag/vineyard-ci-v1) instead: 32 images of the same survey, two full flight lines, so they finish sooner. Each run checks the SHA-256 of the download, then checks that the orthophoto, DSM, point cloud and textured model exist, and that the orthophoto has a projected coordinate system and covers the GPS position of every image.
 
@@ -51,7 +62,7 @@ Put your images in a folder named `images`, for example `/home/you/datasets/proj
 docker run -ti --rm -v /home/you/datasets:/datasets ghcr.io/aidronemap/aidm:0.2.0 --project-path /datasets project
 ```
 
-Options are passed after the project name, for example `--dsm --orthophoto-resolution 2`. Run `docker run --rm ghcr.io/aidronemap/aidm:0.2.0 --help` for the full list. They are the same as ODX's, and every one is described in [Engine options](https://aidronemap.dev/engine/options/).
+Options are passed after the project name, for example `--dsm --orthophoto-resolution 2`. Run `docker run --rm ghcr.io/aidronemap/aidm:0.2.0 --help` for the full list. Options keep the names they had in ODX, and every one is described in [Engine options](https://aidronemap.dev/engine/options/).
 
 ### GPU
 
@@ -93,7 +104,7 @@ Open GeoTIFFs in [QGIS](https://qgis.org), point clouds in [CloudCompare](https:
 
 ## Platforms
 
-AIDM targets Linux. The CPU image runs on x86-64 and arm64, and the NVIDIA CUDA image on x86-64. Windows and macOS native builds from ODX are not maintained here. On those systems AIDM runs in a Linux container.
+AIDM targets Linux. The CPU image runs on x86-64 and arm64, and the NVIDIA CUDA image on x86-64. There are no native Windows or macOS builds. On those systems AIDM runs in a Linux container. On a Mac with Apple silicon and macOS 26 or newer, [AIDM UI](https://github.com/AIDroneMap/aidm-ui/releases/latest) checks the Mac, installs the engine and offers a sample job, with no commands to type.
 
 ## Hardware we build for
 
@@ -118,16 +129,14 @@ Target dates, subject to change.
 
 | Phase | Target | Focus |
 | --- | --- | --- |
-| Foundation | Nov 2026 | Linux images, test datasets, weekly sync with ODX |
-| Measure | Dec 2026 to Jan 2027 | Per-stage profiling, baseline numbers against ODX |
+| Foundation | Oct to Nov 2026 | Linux images for x86-64 and arm64, open test datasets, GPU paths proven by the release test, the first AIDM UI with a signed Mac app (done) |
+| Measure | Dec 2026 to Jan 2027 | Per-stage profiling, first public benchmark numbers |
 | Speed | Feb to Mar 2027 | First speedups on the slowest stages, mixed CPU and GPU jobs |
 | 1.0 | Apr to Jun 2027 | AI masking and dataset checks, documentation, first stable release |
 
 ## Contributing
 
-Contributions are welcome. Read the [contributing guide](https://github.com/AIDroneMap/.github/blob/main/CONTRIBUTING.md) first. Every commit needs a DCO sign-off (`git commit -s`).
-
-If a fix also applies to ODX, it is welcome there too. Note that ODX only accepts pull requests and issues opened and written by a person, with any AI use disclosed; see their contributing guidelines.
+Contributions are welcome. Read the [contributing guide](https://github.com/AIDroneMap/.github/blob/main/CONTRIBUTING.md) first. Every commit needs a DCO sign-off (`git commit -s`). Questions and ideas go to [Discussions](https://github.com/AIDroneMap/aidm/discussions).
 
 ## Licence
 
