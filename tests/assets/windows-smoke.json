@@ -317,5 +317,17 @@
       }
     ]
   },
-  "gpu_source_output": "[INFO] No CUDA drivers detected\nhas_gpu(no_gpu=False): False\n[INFO] Disabling GPU features (--no-gpu is set)\nhas_gpu(no_gpu=True): False\n"
+  "gpu_source_output": "[INFO] No CUDA drivers detected\nhas_gpu(no_gpu=False): False\n[INFO] Disabling GPU features (--no-gpu is set)\nhas_gpu(no_gpu=True): False\n",
+  "georeferencing": {
+    "positive": {
+      "source": "synthetic projected GeoTIFF enclosing one synthetic JPEG GPS position, built on the scratch machine",
+      "code": 0,
+      "stdout": "[georef] ok    odm_orthophoto\\odm_orthophoto.tif is in EPSG:32632 and its bounds contain all 1 image positions\n"
+    },
+    "negative": {
+      "source": "actual task API test fixture orthophoto plus the 32 downloaded CI dataset images",
+      "code": 1,
+      "stdout": "[georef] FAIL: 32 of 32 image positions are outside the bounds of odm_orthophoto\\odm_orthophoto.tif: [image positions omitted]\n"
+    }
+  }
 }

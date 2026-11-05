@@ -240,6 +240,12 @@ class TestRecordedInputs(unittest.TestCase):
         self.assertEqual(set(config["OUTPUTS"].split()),
                          {m["name"] for m in self.record["results"]["completed"]})
 
+    def test_recorded_georeferencing_verdicts(self):
+        for name, verdict in self.record["georeferencing"].items():
+            with self.subTest(verdict=name):
+                self.assertEqual(bool(smoke.check_georeferencing(verdict["code"], verdict["stdout"])),
+                                 name == "negative")
+
     def test_start_verdict_uses_source_detection_and_stub_version(self):
         info = NodeInfo(self.record["api_info"])
         self.assertEqual(smoke.check_start(info, "0.2.0", 0,

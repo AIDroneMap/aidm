@@ -6,7 +6,7 @@ AIDM uses [Semantic Versioning](https://semver.org). AIDM started as a fork of O
 
 ### Added
 
-- A Windows smoke test through the pinned released task API, with a separate start check for the engine version and absence of a CUDA driver. Evidence: `tests/test_windows_smoke.py` checks the shared settings, archive checks, task states, required outputs and failure verdicts. The Windows runner first calls the script in #124.
+- A Windows smoke test through the pinned released task API, with a separate start check for the engine version and absence of a CUDA driver. Evidence: `tests/test_windows_smoke.py` checks the shared settings, archive checks, task states, required outputs, Windows command arguments and failure verdicts, with recorded task API and georeferencing responses. The Windows runner first calls the script in #124.
 - The design of the native Windows engine for 0.3: two variants, `windows-x64` and `windows-x64-cuda`, prebuilt dependencies from a repository of the project, and one archive assembled by the task API's release ([ADR 0005](docs/adr/0005-windows-dependencies-come-from-their-own-repository.md), [ADR 0006](docs/adr/0006-two-windows-variants-and-a-driver-floor.md), [ADR 0007](docs/adr/0007-the-native-package-is-one-archive-assembled-by-the-api-release.md), [design note](docs/design/windows-engine-0.3.0.md)). Nothing is built yet: the release workflow has no Windows job and `README.md` still says so. Evidence: the documents themselves; issue #15 carries the scope.
 
 ## 0.2.0
