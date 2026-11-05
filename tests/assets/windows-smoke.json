@@ -1,0 +1,321 @@
+{
+  "source": "Task API v2.7.0 in test mode on Windows, with stub ENGINE and VERSION files. Task identifiers and dates are normalized. Member lists include only the required outputs. No engine pipeline ran.",
+  "api_info": {
+    "version": "2.7.0",
+    "engine": "aidm",
+    "engineVersion": "0.2.0",
+    "maxParallelTasks": 1
+  },
+  "task_states": {
+    "completed_running": {
+      "uuid": "recorded-task",
+      "name": "Windows smoke test",
+      "dateCreated": 0,
+      "processingTime": 0,
+      "status": {
+        "code": 20
+      },
+      "options": [
+        {
+          "name": "dsm",
+          "value": true
+        },
+        {
+          "name": "pc-ept",
+          "value": true
+        },
+        {
+          "name": "cog",
+          "value": true
+        },
+        {
+          "name": "gltf",
+          "value": true
+        }
+      ],
+      "imagesCount": 32,
+      "progress": 0
+    },
+    "completed_completed": {
+      "uuid": "recorded-task",
+      "name": "Windows smoke test",
+      "dateCreated": 0,
+      "processingTime": 0,
+      "status": {
+        "code": 40
+      },
+      "options": [
+        {
+          "name": "dsm",
+          "value": true
+        },
+        {
+          "name": "pc-ept",
+          "value": true
+        },
+        {
+          "name": "cog",
+          "value": true
+        },
+        {
+          "name": "gltf",
+          "value": true
+        }
+      ],
+      "imagesCount": 32,
+      "progress": 100
+    },
+    "failed_failed": {
+      "uuid": "recorded-task",
+      "name": "Windows smoke test",
+      "dateCreated": 0,
+      "processingTime": 0,
+      "status": {
+        "code": 30
+      },
+      "options": [
+        {
+          "name": "dsm",
+          "value": true
+        },
+        {
+          "name": "pc-ept",
+          "value": true
+        },
+        {
+          "name": "cog",
+          "value": true
+        },
+        {
+          "name": "gltf",
+          "value": true
+        }
+      ],
+      "imagesCount": 32,
+      "progress": 100
+    },
+    "canceled_queued_first_running": {
+      "uuid": "recorded-task",
+      "name": "Windows smoke test",
+      "dateCreated": 0,
+      "processingTime": 0,
+      "status": {
+        "code": 20
+      },
+      "options": [
+        {
+          "name": "dsm",
+          "value": true
+        },
+        {
+          "name": "pc-ept",
+          "value": true
+        },
+        {
+          "name": "cog",
+          "value": true
+        },
+        {
+          "name": "gltf",
+          "value": true
+        }
+      ],
+      "imagesCount": 32,
+      "progress": 0
+    },
+    "canceled_queued_second_queued": {
+      "uuid": "recorded-task",
+      "name": "Windows smoke test",
+      "dateCreated": 0,
+      "processingTime": 0,
+      "status": {
+        "code": 10
+      },
+      "options": [
+        {
+          "name": "dsm",
+          "value": true
+        },
+        {
+          "name": "pc-ept",
+          "value": true
+        },
+        {
+          "name": "cog",
+          "value": true
+        },
+        {
+          "name": "gltf",
+          "value": true
+        }
+      ],
+      "imagesCount": 32,
+      "progress": 0
+    },
+    "canceled_queued_second_canceled": {
+      "uuid": "recorded-task",
+      "name": "Windows smoke test",
+      "dateCreated": 0,
+      "processingTime": 0,
+      "status": {
+        "code": 50
+      },
+      "options": [
+        {
+          "name": "dsm",
+          "value": true
+        },
+        {
+          "name": "pc-ept",
+          "value": true
+        },
+        {
+          "name": "cog",
+          "value": true
+        },
+        {
+          "name": "gltf",
+          "value": true
+        }
+      ],
+      "imagesCount": 32,
+      "progress": 0
+    },
+    "canceled_queued_first_canceled": {
+      "uuid": "recorded-task",
+      "name": "Windows smoke test",
+      "dateCreated": 0,
+      "processingTime": 0,
+      "status": {
+        "code": 50
+      },
+      "options": [
+        {
+          "name": "dsm",
+          "value": true
+        },
+        {
+          "name": "pc-ept",
+          "value": true
+        },
+        {
+          "name": "cog",
+          "value": true
+        },
+        {
+          "name": "gltf",
+          "value": true
+        }
+      ],
+      "imagesCount": 32,
+      "progress": 0
+    },
+    "skip_orthophotos_completed": {
+      "uuid": "recorded-task",
+      "name": "Windows smoke test",
+      "dateCreated": 0,
+      "processingTime": 0,
+      "status": {
+        "code": 40
+      },
+      "options": [
+        {
+          "name": "dsm",
+          "value": true
+        },
+        {
+          "name": "pc-ept",
+          "value": true
+        },
+        {
+          "name": "cog",
+          "value": true
+        },
+        {
+          "name": "gltf",
+          "value": true
+        }
+      ],
+      "imagesCount": 32,
+      "progress": 100
+    },
+    "skip_dems_completed": {
+      "uuid": "recorded-task",
+      "name": "Windows smoke test",
+      "dateCreated": 0,
+      "processingTime": 0,
+      "status": {
+        "code": 40
+      },
+      "options": [
+        {
+          "name": "dsm",
+          "value": true
+        },
+        {
+          "name": "pc-ept",
+          "value": true
+        },
+        {
+          "name": "cog",
+          "value": true
+        },
+        {
+          "name": "gltf",
+          "value": true
+        }
+      ],
+      "imagesCount": 32,
+      "progress": 100
+    }
+  },
+  "results": {
+    "completed": [
+      {
+        "name": "odm_dem/dsm.tif",
+        "size": 180298
+      },
+      {
+        "name": "odm_georeferencing/odm_georeferenced_model.laz",
+        "size": 594
+      },
+      {
+        "name": "odm_orthophoto/odm_orthophoto.tif",
+        "size": 180356
+      },
+      {
+        "name": "odm_texturing/odm_textured_model_geo.obj",
+        "size": 0
+      }
+    ],
+    "skip_orthophotos": [
+      {
+        "name": "odm_dem/dsm.tif",
+        "size": 180298
+      },
+      {
+        "name": "odm_georeferencing/odm_georeferenced_model.laz",
+        "size": 594
+      },
+      {
+        "name": "odm_texturing/odm_textured_model_geo.obj",
+        "size": 0
+      }
+    ],
+    "skip_dems": [
+      {
+        "name": "odm_georeferencing/odm_georeferenced_model.laz",
+        "size": 594
+      },
+      {
+        "name": "odm_orthophoto/odm_orthophoto.tif",
+        "size": 180356
+      },
+      {
+        "name": "odm_texturing/odm_textured_model_geo.obj",
+        "size": 0
+      }
+    ]
+  },
+  "gpu_source_output": "[INFO] No CUDA drivers detected\nhas_gpu(no_gpu=False): False\n[INFO] Disabling GPU features (--no-gpu is set)\nhas_gpu(no_gpu=True): False\n"
+}

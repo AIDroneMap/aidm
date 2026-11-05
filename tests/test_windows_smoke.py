@@ -207,6 +207,72 @@ class TestVerdicts(unittest.TestCase):
                 raise ValueError("bad zip")
 
 
+class TestRecordedInputs(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.record = json.loads((ROOT / "tests/assets/windows-smoke.json").read_text())
+
+    def test_task_state_verdicts(self):
+        for name, payload in self.record["task_states"].items():
+            info = TaskInfo(payload)
+            with self.subTest(name=name):
+                if info.status.value in (30, 50):
+                    with self.assertRaises(RuntimeError):
+                        smoke.task_finished(info.status)
+                else:
+                    self.assertEqual(smoke.task_finished(info.status), info.status.value == 40)
+
+    def test_result_member_verdicts(self):
+        config = smoke.read_config()
+        for name, members in self.record["results"].items():
+            with self.subTest(scenario=name), tempfile.TemporaryDirectory() as folder:
+                for member in members:
+                    path = Path(folder) / member["name"]
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"x" * member["size"])
+                expected = ["odm_texturing/odm_textured_model_geo.obj"]
+                if name == "skip_orthophotos":
+                    expected.append("odm_orthophoto/odm_orthophoto.tif")
+                if name == "skip_dems":
+                    expected.append("odm_dem/dsm.tif")
+                self.assertCountEqual(smoke.check_outputs(folder, config["OUTPUTS"]),
+                                      ["missing or empty output: " + path for path in expected])
+        self.assertEqual(set(config["OUTPUTS"].split()),
+                         {m["name"] for m in self.record["results"]["completed"]})
+
+    def test_start_verdict_uses_source_detection_and_stub_version(self):
+        info = NodeInfo(self.record["api_info"])
+        self.assertEqual(smoke.check_start(info, "0.2.0", 0,
+                                           self.record["gpu_source_output"]), [])
+        self.assertTrue(smoke.check_start(info, "0.3.0", 0,
+                                          self.record["gpu_source_output"]))
+
+
+class TestPackagePython(unittest.TestCase):
+    def test_batch_environment_and_literal_python_arguments(self):
+        engine = Path("package with spaces/engine")
+        args = ["-c", 'print("two words & symbols")']
+        setup = SimpleNamespace(returncode=0, stdout="Path=packaged-python\r\n"
+                                "UNICODE=caf\u00e9\r\nVALUE=a=b\r\n=C:=ignored\r\n")
+        result = SimpleNamespace(returncode=0, stdout="two words & symbols\n")
+        with mock.patch.object(smoke.subprocess, "run", side_effect=[setup, result]) as run:
+            self.assertIs(smoke.package_python(engine, args), result)
+        setup_command = run.call_args_list[0].args[0]
+        self.assertIsInstance(setup_command, str)
+        self.assertIn('call "%s"' % (engine / "win32env.bat"), setup_command)
+        self.assertNotIn('\\"', setup_command)
+        self.assertEqual(run.call_args.args[0],
+                         [str(engine / "python/python.exe"), "-X", "utf8", *args])
+        self.assertEqual(run.call_args.kwargs["env"],
+                         {"Path": "packaged-python", "UNICODE": "caf\u00e9", "VALUE": "a=b"})
+
+    def test_setup_failure_stops_before_python(self):
+        setup = SimpleNamespace(returncode=1, stdout="", stderr="batch failed")
+        with mock.patch.object(smoke.subprocess, "run", return_value=setup) as run:
+            self.assertIs(smoke.package_python(Path("engine"), ["-c", "print(1)"]), setup)
+        run.assert_called_once()
+
+
 class TestRun(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()

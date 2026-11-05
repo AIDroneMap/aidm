@@ -200,11 +200,20 @@ def require_ok(problems):
 
 
 def package_python(engine, args, timeout=120):
-    # The API's helper calls win32env.bat too. It selects the packaged Python
-    # and supplies the DLL and data paths needed by the georeferencing check.
-    command = 'call "%s" && python -X utf8 %s' % (
-        engine / "win32env.bat", subprocess.list2cmdline([str(a) for a in args]))
-    return subprocess.run(["cmd.exe", "/d", "/s", "/c", command], cwd=engine,
+    # cmd.exe needs its own quoting. Capture the batch environment first,
+    # then pass Python arguments directly, so code and paths avoid the shell.
+    command = 'cmd.exe /d /u /s /c "call "%s" >nul && set"' % (engine / "win32env.bat")
+    setup = subprocess.run(command, cwd=engine, capture_output=True, text=True,
+                           encoding="utf-16-le", errors="replace", timeout=timeout)
+    if setup.returncode != 0:
+        return setup
+    environment = {}
+    for line in setup.stdout.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key:
+            environment[key] = value
+    return subprocess.run([str(engine / "python/python.exe"), "-X", "utf8",
+                           *[str(arg) for arg in args]], cwd=engine, env=environment,
                           capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=timeout)
 
