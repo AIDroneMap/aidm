@@ -27,3 +27,9 @@ The deps repository is rebuilt by hand or on its own tag, never on a schedule. I
 - Versions on Windows and on Linux differ where vcpkg's pins differ (PROJ, Boost, libtiff among them). The deps repository records each difference. Outputs may differ between the platforms, so Windows gets no golden hashes until a diagnostic has established which outputs are stable there.
 - The export is one more thing to keep in step with the SuperBuild pins. A SuperBuild pin that needs a newer library needs a deps release first.
 - If the export turns out not to fit the hosted runner's time together with the SuperBuild, the way out is to move more libraries into the export (OpenCV and Ceres first), not to shorten the SuperBuild.
+
+## Amendment, 2026-11-05
+
+The deps release also publishes a zip of the VC++ runtime DLLs, as required by the [engine spec](../specs/0113-windows-engine-0.3.0.md) and the [deps spec](https://github.com/AIDroneMap/aidm-windows-deps/blob/main/docs/specs/0001-first-deps-release.md). The engine copies these DLLs into the package so that it needs no separate runtime installation.
+
+The deps repository has two workflows, not one. `release.yml` builds and exports the dependencies. `tests.yml` runs the release check script's unit tests on every push to a branch and every pull request, as the deps spec requires. The release workflow remains unscheduled.

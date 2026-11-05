@@ -29,3 +29,7 @@ Both variants target Windows 11 on x86-64 with AVX2 and FMA, the same minimum as
 - The manifest schema of the interface gains one optional key. Older interfaces ignore it and never see a Windows variant, because the Windows variants arrive with the interface release that reads it.
 - The stub driver download and its hashless URL go away.
 - Sky removal and background removal run on the CPU on Windows in this line, as they do in the Linux CPU image.
+
+## Amendment, 2026-11-05
+
+The interface checks the processor for AVX2 only before any download, as the [interface spec](https://github.com/AIDroneMap/aidm-ui/issues/175) requires. The Windows processor feature call has no flag for FMA, so the interface does not check it. The engine's own start check remains the last word on whether the processor meets the minimum. Both Windows variants still require AVX2 and FMA, as [ADR 0001](0001-build-for-modern-cpus.md) requires. The minimum is unchanged.
