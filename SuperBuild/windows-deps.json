@@ -1,0 +1,26 @@
+{
+  "tag": "v1.0.0",
+  "triplet": "x64-windows-avx2",
+  "assets": {
+    "export": {
+      "file": "aidm-windows-deps.zip",
+      "sha256": "f88eaab963260cdfdc6422c5825ad9f424de8f6e2602d3a58af702d6dbb6aaec"
+    },
+    "gdal-wheel": {
+      "file": "gdal-3.8.4-cp312-cp312-win_amd64.whl",
+      "sha256": "2cab6dd74afcf34c4c6db51425c2fe2b0fe946a7163dba8893cc4194e3c7bc07"
+    },
+    "python": {
+      "file": "python-3.12.10-embed-amd64.zip",
+      "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
+    },
+    "exiftool": {
+      "file": "exiftool-13.61_64.zip",
+      "sha256": "ab75b37515385a753aa60a58f68ffffe1ff81e43b319df9540978fb19e0580e5"
+    },
+    "licenses": {
+      "file": "LICENSES.md",
+      "sha256": "bda3f8f1f48351c86a07ea1abe3c23f0e97e967ce8143f0344f50a9063660433"
+    }
+  }
+}
