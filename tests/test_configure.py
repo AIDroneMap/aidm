@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import importlib.util
 import io
@@ -6,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+from types import SimpleNamespace
 import unittest
 import zipfile
 
@@ -243,6 +245,24 @@ class TestMsvcEnvironment(unittest.TestCase):
         env = {"CL": "/MP"}
         configure.msvc_environment(env)
         self.assertEqual(env, {"CL": "/MP"})
+
+
+class TestReportToolset(unittest.TestCase):
+    def report(self, env):
+        def fake_cl(cmd, **kwargs):
+            return SimpleNamespace(stderr="Microsoft (R) C/C++ Optimizing Compiler Version 19.99 for x64\nusage\n")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            configure.report_toolset(env, runner=fake_cl)
+        return out.getvalue().splitlines()
+
+    def test_upper_case_names_of_a_windows_environment_are_read(self):
+        lines = self.report({"VSCMD_VER": "18.11.0", "VISUALSTUDIOVERSION": "18.0", "VCTOOLSVERSION": "14.50.1"})
+        self.assertEqual(lines, ["VSCMD_VER=18.11.0", "VisualStudioVersion=18.0", "VCToolsVersion=14.50.1",
+                                 "Microsoft (R) C/C++ Optimizing Compiler Version 19.99 for x64"])
+
+    def test_missing_names_are_reported(self):
+        self.assertIn("VCToolsVersion=(not set)", self.report({}))
 
 
 class TestDownloadSources(unittest.TestCase):

@@ -199,12 +199,14 @@ def msvc_environment(env):
     return env
 
 
-def report_toolset(env):
+def report_toolset(env, runner=subprocess.run):
     """Print the Visual Studio and MSVC versions of the developer shell."""
+    # On Windows os.environ, and so a copy of it, holds names in upper case.
+    by_name = {key.upper(): value for key, value in env.items()}
     for name in ("VSCMD_VER", "VisualStudioVersion", "VCToolsVersion"):
-        print("%s=%s" % (name, env.get(name, "(not set)")))
+        print("%s=%s" % (name, by_name.get(name.upper(), "(not set)")))
     try:
-        banner = subprocess.run(["cl"], env=env, capture_output=True, text=True).stderr
+        banner = runner(["cl"], env=env, capture_output=True, text=True).stderr
         print(banner.strip().splitlines()[0] if banner.strip() else "cl printed no version")
     except OSError as e:
         print("Cannot run cl: %s" % e)
@@ -275,6 +277,9 @@ def main(argv=None):
     parser.add_argument("action", type=str, choices=["build", "clean"],
                         help="Action: %(choices)s")
     args = parser.parse_args(argv)
+    # Keep this script's lines in order with the output of the commands it
+    # runs when both go to one log file.
+    sys.stdout.reconfigure(line_buffering=True)
 
     if sys.platform != "win32":
         print("This script is for Windows only. Use configure.sh instead.")
