@@ -24,6 +24,7 @@ __pycache__
 storage/
 
 vcpkg/
+vcpkg.unpack/
 vcpkg-env.zip
 venv/
 python312/

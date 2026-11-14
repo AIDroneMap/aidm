@@ -16,7 +16,39 @@ if (NOT CMAKE_BUILD_TYPE)
 endif()
 
 if (WIN32)
-    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "" FORCE)
+    # The Windows libraries come from the deps release pinned in
+    # windows-deps.json. configure.py downloads it, checks its hashes and
+    # unpacks the export into vcpkg/ at the root of the repository.
+    set(AIDM_WINDOWS_DEPS_PIN "${CMAKE_CURRENT_SOURCE_DIR}/windows-deps.json")
+    file(READ "${AIDM_WINDOWS_DEPS_PIN}" _aidm_pin)
+    string(JSON AIDM_VCPKG_TRIPLET ERROR_VARIABLE _aidm_pin_error GET "${_aidm_pin}" triplet)
+    if (_aidm_pin_error)
+        message(FATAL_ERROR "${AIDM_WINDOWS_DEPS_PIN}: no triplet: ${_aidm_pin_error}")
+    endif()
+    get_filename_component(AIDM_VCPKG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg" ABSOLUTE)
+    set(CMAKE_TOOLCHAIN_FILE "${AIDM_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "" FORCE)
+    if (NOT EXISTS "${CMAKE_TOOLCHAIN_FILE}" OR NOT EXISTS "${AIDM_VCPKG_ROOT}/installed/${AIDM_VCPKG_TRIPLET}")
+        message(FATAL_ERROR "${AIDM_VCPKG_ROOT} holds no deps export for ${AIDM_VCPKG_TRIPLET}. "
+                            "Run python configure.py build, which unpacks the export pinned in ${AIDM_WINDOWS_DEPS_PIN}.")
+    endif()
+endif()
+
+if (MSVC)
+    # ADR 0001 on Windows: every tool compiles for AVX2. configure.py puts
+    # /arch:AVX2 in the CL environment variable, which MSVC adds to every
+    # compile of every external project, CMake, MSBuild or other. Check here
+    # that the compiler this build uses really targets AVX2.
+    include(CheckCSourceCompiles)
+    include(CheckCXXSourceCompiles)
+    set(_aidm_avx2_check "#ifndef __AVX2__\n#error not compiled for AVX2\n#endif\nint main(void) { return 0; }\n")
+    unset(AIDM_MSVC_C_AVX2 CACHE)
+    unset(AIDM_MSVC_CXX_AVX2 CACHE)
+    check_c_source_compiles("${_aidm_avx2_check}" AIDM_MSVC_C_AVX2)
+    check_cxx_source_compiles("${_aidm_avx2_check}" AIDM_MSVC_CXX_AVX2)
+    if (NOT AIDM_MSVC_C_AVX2 OR NOT AIDM_MSVC_CXX_AVX2)
+        message(FATAL_ERROR "${CMAKE_CURRENT_LIST_FILE}: MSVC does not compile for AVX2. "
+                            "Set the CL environment variable to /arch:AVX2, as python configure.py build does.")
+    endif()
 endif()
 
 if (APPLE)
@@ -97,9 +129,9 @@ if (WIN32)
   if (NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     message(FATAL_ERROR "CMAKE_TOOLCHAIN_FILE not set. You need to set it to the path of vcpkg.cmake")
   endif()
-  get_filename_component(CMAKE_TOOLCHAIN_DIR ${CMAKE_TOOLCHAIN_FILE} DIRECTORY)
-  get_filename_component(VCPKG_ROOT "${CMAKE_TOOLCHAIN_DIR}/../../" ABSOLUTE)
-  set(WIN32_CMAKE_ARGS "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
+  set(VCPKG_ROOT "${AIDM_VCPKG_ROOT}")
+  set(WIN32_CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
+                       -DVCPKG_TARGET_TRIPLET=${AIDM_VCPKG_TRIPLET})
   set(PYTHON_HOME "${SB_ROOT_DIR}/../venv")
   set(PYTHON_EXE_PATH "${PYTHON_HOME}/Scripts/python")
 
@@ -109,7 +141,7 @@ if (WIN32)
   set(GDAL_INCLUDE_DIR "${GDAL_ROOT}/include/gdal")
 
   message("Copying VCPKG DLLs...")
-  file(GLOB COPY_DLLS "${VCPKG_ROOT}/installed/x64-windows/bin/*.dll")
+  file(GLOB COPY_DLLS "${VCPKG_ROOT}/installed/${AIDM_VCPKG_TRIPLET}/bin/*.dll")
   file(COPY ${COPY_DLLS} DESTINATION "${SB_INSTALL_DIR}/bin")
 
   message("Copying CUDA DLLs...")
