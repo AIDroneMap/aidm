@@ -2,8 +2,9 @@
 
 `build` downloads the Windows dependencies release pinned in
 SuperBuild/windows-deps.json, checks the SHA-256 of every file against the
-pin, unpacks the deps export into vcpkg/ and builds the SuperBuild with MSVC
-for AVX2. `clean` removes what `build` made.
+pin, unpacks the deps export into vcpkg/, installs the CMake pinned in
+SuperBuild/windows-cmake.txt and builds the SuperBuild with that CMake and
+MSVC for AVX2. `clean` removes what `build` made.
 
 The functions that read the pin and check the downloads run on any platform,
 so the unit tests in tests/test_configure.py import this file on Linux.
@@ -27,6 +28,20 @@ PIN_FILE = os.path.join(ROOT, "SuperBuild", "windows-deps.json")
 DOWNLOAD_DIR = os.path.join(ROOT, "SuperBuild", "download", "windows-deps")
 EXPORT_DIR = os.path.join(ROOT, "vcpkg")
 EXPORT_MARKER = ".aidm-deps-export"
+CMAKE_PIN_FILE = os.path.join(ROOT, "SuperBuild", "windows-cmake.txt")
+CMAKE_DIR = os.path.join(ROOT, "SuperBuild", "download", "cmake")
+
+# The oldest CMake with a generator for Visual Studio 18 2026, the Visual
+# Studio of the hosted Windows runner.
+CMAKE_MINIMUM = (4, 2)
+
+# CMake 4 refuses a project whose cmake_minimum_required is below 3.5, and
+# some tools of the SuperBuild declare one. CMake reads this environment
+# variable each time it creates a build tree, and every external project of
+# the SuperBuild has its own, so those tools configure with their
+# CMakeLists.txt unchanged. Only the Windows build sets it: configure.py runs
+# on Windows only.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 
 # The only place the Windows build downloads from. The tag and the file
 # names come from the pin file; the hashes decide whether a file is used.
@@ -43,6 +58,8 @@ MSVC_ARCH_FLAG = "/arch:AVX2"
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+# One pip requirement: cmake at an exact version, then one or more hashes.
+_CMAKE_REQUIREMENT = re.compile(r"^cmake==(\d+)\.(\d+)\.(\d+)((?:\.\d+)?)(?:\s+--hash=sha256:[0-9a-f]{64})+$")
 
 
 class DepsError(Exception):
@@ -199,6 +216,129 @@ def msvc_environment(env):
     return env
 
 
+def load_cmake_pin(path=CMAKE_PIN_FILE):
+    """Return the CMake version pinned in path, or raise DepsError naming the file.
+
+    The pin is a pip requirements file with one line: cmake==X.Y.Z and the
+    SHA-256 of each wheel pip may install. pip reads the hashes itself.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = [line.strip() for line in f]
+    except OSError as e:
+        raise DepsError("%s: cannot read the CMake pin: %s" % (path, e))
+    requirements = [line for line in lines if line and not line.startswith("#")]
+    if len(requirements) != 1:
+        raise DepsError("%s: expected one requirement line, found %d" % (path, len(requirements)))
+    match = _CMAKE_REQUIREMENT.match(requirements[0])
+    if not match:
+        raise DepsError("%s: the line must be cmake==X.Y.Z followed by --hash=sha256: "
+                        "and 64 lowercase hex digits" % path)
+    major, minor = int(match.group(1)), int(match.group(2))
+    if (major, minor) < CMAKE_MINIMUM:
+        raise DepsError("%s: CMake %d.%d has no generator for the Visual Studio of the hosted runner. "
+                        "Pin %d.%d or later." % ((path, major, minor) + CMAKE_MINIMUM))
+    return "%s.%s.%s%s" % match.groups()
+
+
+def cmake_executable(folder):
+    """The cmake program of the PyPI wheel installed into folder."""
+    name = "cmake.exe" if sys.platform == "win32" else "cmake"
+    return os.path.join(folder, "cmake", "data", "bin", name)
+
+
+def install_cmake(pin_file=CMAKE_PIN_FILE, cmake_dir=CMAKE_DIR, python=None, runner=subprocess.run):
+    """Install the pinned CMake from PyPI and return the path of its cmake program.
+
+    pip runs with --require-hashes, so a wheel whose SHA-256 is not in the
+    pin stops the build. Each build installs into a fresh folder, so a CMake
+    left by an earlier build is never used unchecked.
+    """
+    version = load_cmake_pin(pin_file)
+    target = os.path.join(cmake_dir, version)
+    safe_remove(target)
+    cmd = [python or sys.executable, "-m", "pip", "install", "--disable-pip-version-check",
+           "--require-hashes", "--only-binary", ":all:", "--no-deps",
+           "--target", target, "-r", pin_file]
+    print("Installing CMake %s from PyPI, pinned in %s" % (version, pin_file))
+    result = runner(cmd)
+    cmake = cmake_executable(target)
+    if result.returncode != 0:
+        safe_remove(target)
+        raise DepsError("%s: pip did not install CMake %s with a pinned SHA-256, exit code %s"
+                        % (pin_file, version, result.returncode))
+    if not os.path.isfile(cmake):
+        raise DepsError("%s: the CMake wheel has no %s" % (pin_file, os.path.relpath(cmake, target)))
+    return cmake
+
+
+def cmake_version(cmake, runner=subprocess.run):
+    """Return the version cmake --version prints, or raise DepsError."""
+    result = runner([cmake, "--version"], capture_output=True, text=True)
+    first = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    match = re.match(r"^cmake version (\S+)$", first)
+    if result.returncode != 0 or not match:
+        raise DepsError("%s --version did not print a version: %r" % (cmake, first))
+    return match.group(1)
+
+
+def default_generator(cmake, env, runner=subprocess.run):
+    """Return the generator cmake picks when none is given, or raise DepsError.
+
+    cmake --help marks it with a star in its list of generators. The
+    SuperBuild needs a Visual Studio generator: its PoissonRecon step runs
+    MSBuild on a Visual Studio project.
+    """
+    result = runner([cmake, "--help"], env=env, capture_output=True, text=True)
+    starred = [line[1:].split("=")[0].strip() for line in result.stdout.splitlines() if line.startswith("*")]
+    if result.returncode != 0 or len(starred) != 1:
+        raise DepsError("%s --help did not name a default generator" % cmake)
+    generator = starred[0]
+    if not generator.startswith("Visual Studio "):
+        raise DepsError("%s would use the generator %s. The SuperBuild needs a Visual Studio generator: "
+                        "run configure.py from a Visual Studio developer shell, with a Visual Studio "
+                        "that this CMake knows." % (cmake, generator))
+    return generator
+
+
+def superbuild_environment(env, cmake):
+    """Return a copy of env for the SuperBuild: the AVX2 flag, the policy
+    minimum, and the pinned cmake first on PATH for any step that calls cmake
+    by name."""
+    env = msvc_environment(env)
+    env["CMAKE_POLICY_VERSION_MINIMUM"] = CMAKE_POLICY_VERSION_MINIMUM
+    # A Windows environment copied into a dict may spell it Path.
+    path_key = next((key for key in env if key.upper() == "PATH"), "PATH")
+    current = env.get(path_key, "")
+    env[path_key] = os.path.dirname(cmake) + (os.pathsep + current if current else "")
+    return env
+
+
+def build_superbuild(cmake, pinned, build_dir, env, runner=subprocess.run):
+    """Print the CMake the SuperBuild uses, then configure and build it with that CMake.
+
+    pinned is the version of the CMake pin. A wheel version may carry a
+    fourth number for a rebuild of the same CMake, which cmake does not print.
+    """
+    version = cmake_version(cmake, runner=runner)
+    if version != ".".join(pinned.split(".")[:3]):
+        raise DepsError("%s reports version %s, but %s pins %s" % (cmake, version, CMAKE_PIN_FILE, pinned))
+    generator = default_generator(cmake, env, runner=runner)
+    print("CMake: %s" % cmake)
+    print("CMake version: %s" % version)
+    print("CMake generator: %s" % generator)
+    print("CMAKE_POLICY_VERSION_MINIMUM=%s" % env.get("CMAKE_POLICY_VERSION_MINIMUM", "(not set)"))
+
+    print("Compiling SuperBuild")
+    os.makedirs(build_dir, exist_ok=True)
+    for cmd in ([cmake, ".."],
+                [cmake, "--build", ".", "--config", "Release", "-j%d" % os.cpu_count()]):
+        print("Running %s" % subprocess.list2cmdline(cmd))
+        result = runner(cmd, cwd=build_dir, env=env)
+        if result.returncode != 0:
+            raise DepsError("%s returned %s" % (subprocess.list2cmdline(cmd), result.returncode))
+
+
 def report_toolset(env, runner=subprocess.run):
     """Print the Visual Studio and MSVC versions of the developer shell."""
     # On Windows os.environ, and so a copy of it, holds names in upper case.
@@ -240,7 +380,8 @@ def build():
     assets = fetch_pinned_assets(pin)
     unpack_export(pin, assets["export"])
 
-    env = msvc_environment(os.environ)
+    cmake = install_cmake()
+    env = superbuild_environment(os.environ, cmake)
     print("CL=%s" % env["CL"])
     report_toolset(env)
 
@@ -256,10 +397,7 @@ def build():
 
     build_dir = os.path.join(ROOT, "SuperBuild", "build")
     if not os.path.exists(build_dir) or not os.path.exists(os.path.join(ROOT, "SuperBuild", "install")):
-        print("Compiling SuperBuild")
-        os.makedirs(build_dir, exist_ok=True)
-        run("cmake ..", cwd=build_dir, env=env)
-        run("cmake --build . --config Release -j%d" % os.cpu_count(), cwd=build_dir, env=env)
+        build_superbuild(cmake, load_cmake_pin(), build_dir, env)
 
 
 def clean():
