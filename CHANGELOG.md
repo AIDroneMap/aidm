@@ -13,6 +13,7 @@ AIDM uses [Semantic Versioning](https://semver.org). AIDM started as a fork of O
 ### Fixed
 
 - The image builds install `six`, which the engine imports in `modules/photo.py` (#146). `six` was never pinned in `requirements.txt`. It came in through `python-dateutil`, which matplotlib pulls in, and `python-dateutil` 4.0.0 no longer depends on it. Without the pin the start check of all three images stopped with `No module named 'six'`, so the nightly of 2026-11-02 and every later one failed. `requirements.txt` now pins `six==1.17.0`. Evidence: the release dry run of this pull request builds the three images and runs their start check and smoke run; the pull request description links it. The unit tests run in the last published image, which already carries `six`, so they do not cover this change.
+- The design note names the hosted Windows runner as it is: image `windows-2025-vs2026` with Visual Studio 2026, not Visual Studio 2022 (#150). Evidence: the probe log of dry run 43600116758, job `windows-x64`, and `BUILD-INFO.txt` of the deps release v1.0.0.
 
 ### Changed
 
