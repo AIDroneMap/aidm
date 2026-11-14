@@ -35,6 +35,16 @@
 # uploads the packed project folder, its SHA-256 and a manifest as the
 # artifact golden-input. Nightly and tag runs never produce it.
 #
+# A dry run with windows set also runs the Windows probe, the job windows-x64
+# (docs/specs/0113-windows-engine-0.3.0.md, issue #116):
+#   gh workflow run release.yml --ref <branch> -f publish=false -f windows=true
+# It runs configure.py build on a hosted Windows runner, which builds the
+# SuperBuild with MSVC from the pinned deps release, then lists the tools
+# that built and the first one that failed, and uploads the build log as the
+# artifact windows-x64-build-log. Its log is read, not fixed. The job has
+# continue-on-error and no job needs it, so its result never decides the run:
+# the Linux jobs stay the verdict. Nightly and tag runs never run it.
+#
 # Every run, in every mode, runs the golden comparison in the three build
 # jobs after the smoke test: the tested image from the pinned golden input,
 # from odm_filterpoints to the end, with its outputs compared by SHA-256 to
@@ -73,6 +83,10 @@ on:
         default: false
       golden_input:
         description: Dry runs only. Also produce the golden input in the cpu-amd64 job and upload it as an artifact.
+        type: boolean
+        default: false
+      windows:
+        description: Dry runs only. Also run the Windows probe, windows-x64, which builds the SuperBuild with MSVC. Its result does not decide the run.
         type: boolean
         default: false
       nightly:
@@ -436,6 +450,138 @@ jobs:
       - name: Disk usage
         if: always()
         run: df -h /
+
+  # The Windows probe, on dry runs with windows=true only. See the comment at
+  # the top. Each tool that fails here gets its own ticket.
+  windows-x64:
+    name: windows-x64
+    needs: check
+    if: ${{ !cancelled() && needs.check.result == 'success' && inputs.windows && needs.check.outputs.mode == 'dry-run' }}
+    # Runner images are pinned on purpose. Moving to a new image is its own PR, with a full dry run.
+    runs-on: windows-2025
+    # The longest a job may run on a hosted runner. The probe's run gives
+    # the first real duration.
+    timeout-minutes: 360
+    # A failed probe does not fail the run, and no job needs this one.
+    continue-on-error: true
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.check.outputs.ref }}
+          persist-credentials: false
+
+      # The runner's own Python. configure.py stops unless it is 3.12.
+      # configure.py downloads the five files of the deps release named in
+      # SuperBuild/windows-deps.json and stops when a SHA-256 differs from
+      # the pin. The build step finds them in place and checks them again.
+      - name: Download and check the deps assets
+        run: |
+          Write-Output "python: $((Get-Command python).Source)"
+          python --version
+          python -c "import configure; configure.fetch_pinned_assets(configure.load_pin())"
+          if ($LASTEXITCODE -ne 0) { throw 'Downloading or checking the deps assets failed.' }
+
+      # The developer environment of the newest Visual Studio on the runner,
+      # found the way the deps release workflow finds it. Its version is
+      # printed, never assumed. configure.py adds /arch:AVX2 to CL, prints
+      # the MSVC toolset and builds the SuperBuild; the runner has no CUDA
+      # toolkit, so this is the CPU variant. cmd merges stderr into stdout,
+      # so the log keeps the order the build wrote it in. The step stops 30
+      # minutes before the job does, so the log is still listed and uploaded.
+      - name: Build the SuperBuild with configure.py
+        id: build
+        timeout-minutes: 330
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $installation) { throw 'Cannot find the Visual Studio C++ developer environment.' }
+          $version = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
+          Write-Output "Visual Studio $version in $installation"
+          Import-Module "$installation/Common7/Tools/Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          Write-Output "cmake: $((Get-Command cmake).Source)"
+          cmake --version
+          cmd /c "python configure.py build 2>&1" | Tee-Object -FilePath windows-x64-build.log
+          if ($LASTEXITCODE -ne 0) { throw "configure.py build exited with $LASTEXITCODE." }
+
+      # Reads the stamp files the SuperBuild's external projects leave in
+      # SuperBuild/build and the build log. Prints the list and adds it to
+      # the run's summary.
+      - name: List the tools that built and the first failure
+        if: always() && steps.build.outcome != 'skipped'
+        shell: python
+        run: |
+          import os
+          import re
+          from pathlib import Path, PureWindowsPath
+
+          # The steps of an external project in order. Each one that
+          # finishes leaves a file <name>-<step> in the project's stamp folder.
+          steps = ("mkdir", "download", "update", "patch", "configure", "build", "install", "done")
+          build_dir = Path("SuperBuild/build")
+          log = Path("windows-x64-build.log")
+
+          reached = {}
+          targets = set()
+          if build_dir.is_dir():
+              for stamp in build_dir.rglob("*"):
+                  if stamp.is_file() and "stamp" in stamp.parent.as_posix():
+                      name, dash, step = stamp.name.rpartition("-")
+                      if dash and step in steps:
+                          reached[name] = max(reached.get(name, 0), steps.index(step))
+              targets = {p.stem for p in build_dir.glob("*.vcxproj")}
+              targets -= {"ALL_BUILD", "ZERO_CHECK", "INSTALL", "PACKAGE", "RUN_TESTS"}
+
+          built = sorted(n for n, i in reached.items() if steps[i] == "done")
+          stopped = sorted(n for n, i in reached.items() if steps[i] != "done")
+          lines = ["Built, every step done (%d): %s" % (len(built), ", ".join(built) or "none")]
+          for name in stopped:
+              lines.append("Not finished: %s, last step done: %s" % (name, steps[reached[name]]))
+          lines.append("Not started: %s" % (", ".join(sorted(targets - set(reached))) or "none"))
+
+          # MSBuild reports a failed external project as MSB8066 and names
+          # its project file; the first such line is the first tool that failed.
+          failed = re.compile(r"error MSB8066:.*\[([^\]]+\.vcxproj)\]")
+          error = re.compile(r": (fatal )?error [A-Z]+\d+|CMake Error|^Error: ")
+          first_failed = None
+          errors = []
+          if log.is_file():
+              with open(log, encoding="utf-8", errors="replace") as f:
+                  for number, line in enumerate(f, 1):
+                      match = failed.search(line)
+                      if match and first_failed is None:
+                          first_failed = PureWindowsPath(match.group(1)).stem
+                      if error.search(line) and len(errors) < 40:
+                          errors.append("%d: %s" % (number, line.rstrip()))
+          else:
+              lines.append("No build log: configure.py build did not start.")
+          lines.append("First tool that failed: %s" % (first_failed or "none reported by MSBuild"))
+          lines.append("First error lines of the build log (line: text):")
+          lines.extend(errors or ["none"])
+
+          text = "\n".join(lines) + "\n"
+          print(text, end="")
+          Path("windows-x64-summary.txt").write_text(text, encoding="utf-8")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("## windows-x64 probe\n\n```\n" + text + "```\n")
+
+      - name: Upload the build log
+        if: always() && steps.build.outcome != 'skipped'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-x64-build-log
+          path: |
+            windows-x64-build.log
+            windows-x64-summary.txt
+          if-no-files-found: error
+
+      - name: Disk usage
+        if: always()
+        run: Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize Name, Root, @{n = 'UsedGB'; e = { [math]::Round($_.Used / 1GB, 1) } }, @{n = 'FreeGB'; e = { [math]::Round($_.Free / 1GB, 1) } }
 
   # Runs the GPU image on a real GPU on Modal. See the comment at the top.
   gpu-test:
