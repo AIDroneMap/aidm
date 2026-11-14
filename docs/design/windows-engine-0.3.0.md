@@ -39,7 +39,7 @@ The interface:
 - The Windows executable is built on Linux with the `bun-windows-x64-baseline` target, with a console window and without a signature.
 - `test-support/native-archive.ts` builds a fake native package and `fake-native-engine.ts` stands in for the engine.
 
-The hosted `windows-2025` runner has Visual Studio 2022, CMake, Ninja, vcpkg, Python 3.12.10 and 7-Zip, and no CUDA toolkit. A job may run six hours. A release asset may not pass 2 GiB.
+The hosted `windows-2025` runner is the image `windows-2025-vs2026`, version 20261103.298.1. It has Visual Studio 2026 18.11.12328.437, CMake 4.4.5, Ninja, vcpkg, Python 3.12.10 and 7-Zip, and no CUDA toolkit. The probe of the `windows-x64` job in dry run 43600116758 printed the image, the Visual Studio version and the CMake version, and the deps release v1.0.0 was built on the same image, as its `BUILD-INFO.txt` records. The engine pins its own CMake (#149), so the runner's CMake does not decide the build. A job may run six hours. A release asset may not pass 2 GiB.
 
 ## Decisions
 
