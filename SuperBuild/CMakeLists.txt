@@ -132,8 +132,30 @@ if (WIN32)
   set(VCPKG_ROOT "${AIDM_VCPKG_ROOT}")
   set(WIN32_CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
                        -DVCPKG_TARGET_TRIPLET=${AIDM_VCPKG_TRIPLET})
-  set(PYTHON_HOME "${SB_ROOT_DIR}/../venv")
-  set(PYTHON_EXE_PATH "${PYTHON_HOME}/Scripts/python")
+  # The package's Python: configure.py unpacks the embeddable package of the
+  # deps release into python/ and installs the wheels of requirements.txt
+  # into its Lib/site-packages. That package has no headers and no import
+  # library, so tools compile against the Python that runs configure.py, of
+  # the same version, which configure.py names in AIDM_PYTHON_EXECUTABLE.
+  set(PYTHON_HOME "${SB_ROOT_DIR}/../python")
+  set(PYTHON_EXE_PATH "$ENV{AIDM_PYTHON_EXECUTABLE}")
+  if (NOT EXISTS "${PYTHON_HOME}/Lib/site-packages" OR NOT EXISTS "${PYTHON_EXE_PATH}")
+    message(FATAL_ERROR "${CMAKE_CURRENT_LIST_FILE}: no package Python in ${PYTHON_HOME}, or "
+                        "AIDM_PYTHON_EXECUTABLE (${PYTHON_EXE_PATH}) names no Python. "
+                        "Run python configure.py build, which sets both.")
+  endif()
+  file(TO_CMAKE_PATH "${PYTHON_EXE_PATH}" PYTHON_EXE_PATH)
+  # The headers and import library of that Python. The deps export also
+  # holds a python312.lib, from the Python 3.12.9 its pybind11 port brings,
+  # which the vcpkg toolchain finds first. Tools that look for Python's
+  # libraries get these two paths instead.
+  get_filename_component(_aidm_python_root "${PYTHON_EXE_PATH}" DIRECTORY)
+  set(AIDM_PYTHON_INCLUDE_DIR "${_aidm_python_root}/include")
+  set(AIDM_PYTHON_LIBRARY "${_aidm_python_root}/libs/python312.lib")
+  if (NOT EXISTS "${AIDM_PYTHON_INCLUDE_DIR}/Python.h" OR NOT EXISTS "${AIDM_PYTHON_LIBRARY}")
+    message(FATAL_ERROR "${CMAKE_CURRENT_LIST_FILE}: ${PYTHON_EXE_PATH} has no ${AIDM_PYTHON_INCLUDE_DIR}/Python.h "
+                        "or no ${AIDM_PYTHON_LIBRARY}. configure.py needs a full Python 3.12 install, not an embeddable one.")
+  endif()
 
   # On Windows OpenCV installs its config in <arch>/<runtime>/lib and names
   # the runtime from MSVC_VERSION. OpenCV 4.12 has no name for MSVC 14.5x

@@ -1,0 +1,8 @@
+# Pins of requirements.txt that PyPI publishes as source only, each one pure
+# Python. configure.py installs every other pin of requirements.txt from
+# wheels only, then these into the same site-packages of the package's
+# Python, in a pip call of their own with --require-hashes: an sdist whose
+# SHA-256 is not listed here stops the build. pip builds the wheel itself,
+# so the hash is the one of the sdist on PyPI. The version must be the one
+# requirements.txt pins, or the build stops.
+vmem==1.0.2 --hash=sha256:95fe9ba737edea8e5737fb9ddda7031d7ca62fd53f53c1c4e95195f3c7d801fd

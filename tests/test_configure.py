@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import subprocess
 import sys
@@ -23,6 +24,7 @@ spec.loader.exec_module(configure)
 # SuperBuild/, so there this is the last release's pin, or no pin at all.
 PIN_FILE = ROOT / "SuperBuild" / "windows-deps.json"
 CMAKE_PIN_FILE = ROOT / "SuperBuild" / "windows-cmake.txt"
+SOURCE_PINS_FILE = ROOT / "SuperBuild" / "windows-python-source.txt"
 
 GOOD_HASH = "d5521b4a9e864505c550abae99ff593d501bd08225583e69b3a9a4ca7f36a03f"
 
@@ -175,6 +177,10 @@ class TestCommittedPin(unittest.TestCase):
     def test_pin_loads_with_the_avx2_triplet(self):
         pin = configure.load_pin(str(PIN_FILE))
         self.assertEqual(pin["triplet"], "x64-windows-avx2")
+
+    def test_pin_names_the_embeddable_python(self):
+        pin = configure.load_pin(str(PIN_FILE))
+        self.assertEqual(configure.embeddable_python_version(pin), "3.12.10")
 
 
 def make_export(path, top="aidm-windows-deps", triplet="x64-windows-avx2", toolchain=True):
@@ -457,6 +463,18 @@ class TestSuperbuildEnvironment(unittest.TestCase):
         self.assertEqual(env, {"PATH": "system"})
 
 
+    def test_python_for_the_tools_is_named(self):
+        env = configure.superbuild_environment({"PATH": "system"}, self.cmake, r"C:\py312\python.exe")
+        self.assertEqual(env["AIDM_PYTHON_EXECUTABLE"], r"C:\py312\python.exe")
+        self.assertNotIn("AIDM_PYTHON_EXECUTABLE", configure.superbuild_environment({}, self.cmake))
+
+    def test_build_python_sees_only_the_package_site_packages(self):
+        env = configure.superbuild_environment({"PATH": "system", "PythonPath": r"C:\elsewhere"}, self.cmake,
+                                               r"C:\py312\python.exe", r"C:\aidm\python\Lib\site-packages")
+        self.assertEqual(env["PYTHONPATH"], r"C:\aidm\python\Lib\site-packages")
+        self.assertNotIn("PythonPath", env)
+        self.assertNotIn("PYTHONPATH", configure.superbuild_environment({}, self.cmake, r"C:\py312\python.exe"))
+
 class TestBuildSuperbuild(unittest.TestCase):
     cmake = os.path.join("pinned", "cmake", "data", "bin", "cmake.exe")
 
@@ -546,6 +564,500 @@ class TestReportToolset(unittest.TestCase):
 
     def test_missing_names_are_reported(self):
         self.assertIn("VCToolsVersion=(not set)", self.report({}))
+
+
+# The ._pth file of python-3.12.10-embed-amd64.zip in the deps release v1.0.0,
+# byte for byte, as its publisher ships it.
+PUBLISHER_PTH = ROOT / "tests" / "assets" / "python312._pth"
+PUBLISHER_PTH_SHA256 = "2820f241bc9d6810d4db21c21cca3845799367fbdf0199620fb37c86a74b945c"
+
+
+class TestEnableSitePackages(unittest.TestCase):
+    def test_asset_is_the_file_its_publisher_ships(self):
+        self.assertEqual(sha256(PUBLISHER_PTH.read_bytes()), PUBLISHER_PTH_SHA256)
+
+    def test_publisher_file_imports_site_and_lists_site_packages(self):
+        text = PUBLISHER_PTH.read_bytes().decode("utf-8")
+        self.assertEqual(configure.enable_site_packages(text),
+                         "python312.zip\r\n.\r\nLib\\site-packages\r\n\r\n"
+                         "# Uncomment to run site.main() automatically\r\nimport site\r\n")
+
+    def test_edited_file_is_not_changed_again(self):
+        once = configure.enable_site_packages(PUBLISHER_PTH.read_bytes().decode("utf-8"))
+        self.assertEqual(configure.enable_site_packages(once), once)
+
+    def test_file_with_unix_line_endings_keeps_them(self):
+        self.assertEqual(configure.enable_site_packages("python312.zip\n.\n#import site\n"),
+                         "python312.zip\n.\nLib\\site-packages\nimport site\n")
+
+    def test_file_without_the_commented_line_gets_import_site(self):
+        self.assertEqual(configure.enable_site_packages("python312.zip\n.\n"),
+                         "python312.zip\n.\nLib\\site-packages\nimport site\n")
+
+    def test_edit_of_the_folder_keeps_the_bytes_of_the_line_endings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "python312._pth"
+            target.write_bytes(PUBLISHER_PTH.read_bytes())
+            with contextlib.redirect_stdout(io.StringIO()):
+                configure.edit_pth_file(folder)
+            self.assertEqual(target.read_bytes(), b"python312.zip\r\n.\r\nLib\\site-packages\r\n\r\n"
+                             b"# Uncomment to run site.main() automatically\r\nimport site\r\n")
+
+    def test_folder_without_one_pth_file_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(configure.DepsError, "expected one ._pth file, found none"):
+                configure.edit_pth_file(folder)
+            (Path(folder) / "a._pth").write_text(".")
+            (Path(folder) / "b._pth").write_text(".")
+            with self.assertRaisesRegex(configure.DepsError, "expected one ._pth file"):
+                configure.edit_pth_file(folder)
+
+
+class TestBuildPython(unittest.TestCase):
+    def test_asset_of_another_name_is_rejected(self):
+        pin = make_pin()
+        with self.assertRaisesRegex(configure.DepsError, "python-X.Y.Z-embed-amd64.zip"):
+            configure.embeddable_python_version(pin)
+
+    def check(self, version="3.12.10", machine="AMD64", bits=64):
+        pin = make_pin()
+        pin["assets"]["python"]["file"] = "python-3.12.10-embed-amd64.zip"
+        configure.check_build_python(pin, version=version, machine=machine, pointer_bits=bits)
+
+    def test_same_version_and_architecture_passes(self):
+        self.check()
+
+    def test_other_patch_version_is_rejected(self):
+        with self.assertRaisesRegex(configure.DepsError, "Python 3.12.9 for AMD64, 64-bit"):
+            self.check(version="3.12.9")
+
+    def test_arm64_or_32_bit_python_is_rejected(self):
+        with self.assertRaisesRegex(configure.DepsError, "ARM64"):
+            self.check(machine="ARM64")
+        with self.assertRaisesRegex(configure.DepsError, "32-bit"):
+            self.check(bits=32)
+
+
+class TestReadRequirements(unittest.TestCase):
+    def read(self, text, platform_name="win32"):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "requirements.txt"
+            path.write_text(text)
+            return configure.read_requirements(str(path), platform_name=platform_name)
+
+    def test_markers_select_the_platform(self):
+        text = "numpy==2.3.2\ngdal[numpy]==3.8.4 ; sys_platform == 'linux'\n# comment\n\nsix==1.17.0  # why\n"
+        self.assertEqual(self.read(text), [("numpy", "2.3.2"), ("six", "1.17.0")])
+        self.assertIn(("gdal", "3.8.4"), self.read(text, "linux"))
+
+    def test_committed_requirements_on_windows(self):
+        pins = dict(configure.read_requirements(str(ROOT / "requirements.txt"), platform_name="win32"))
+        self.assertNotIn("gdal", pins)
+        self.assertEqual(pins["numpy"], "2.3.2")
+        self.assertEqual(pins["onnxruntime"], "1.22.1")
+
+    def test_line_the_check_cannot_read_stops_the_build(self):
+        for line in ("numpy>=2", "numpy==2.3.2 ; python_version < '3.13'", "https://example.invalid/x.whl"):
+            with self.assertRaisesRegex(configure.DepsError, "line 2"):
+                self.read("six==1.17.0\n%s\n" % line)
+
+
+VMEM_SDIST_SHA256 = "95fe9ba737edea8e5737fb9ddda7031d7ca62fd53f53c1c4e95195f3c7d801fd"
+
+
+def write_source_pins(folder, text):
+    path = Path(folder) / "windows-python-source.txt"
+    path.write_text(text)
+    return str(path)
+
+
+class TestSourcePins(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_pins_load_with_their_hashes(self):
+        path = write_source_pins(self.tmp.name, "# why\nvmem==1.0.2 --hash=sha256:%s\n" % VMEM_SDIST_SHA256)
+        self.assertEqual(configure.load_source_pins(path), [("vmem", "1.0.2")])
+
+    def test_pin_without_a_hash_is_rejected(self):
+        for line in ("vmem==1.0.2", "vmem>=1 --hash=sha256:%s" % VMEM_SDIST_SHA256,
+                     "vmem==1.0.2 --hash=sha256:%s" % VMEM_SDIST_SHA256.upper()):
+            path = write_source_pins(self.tmp.name, "%s\n" % line)
+            with self.assertRaisesRegex(configure.DepsError, "line 1: expected name==version"):
+                configure.load_source_pins(path)
+
+    def test_version_must_be_the_one_requirements_pin(self):
+        configure.check_source_pins([("vmem", "1.0.2")], [("numpy", "2.3.2"), ("vmem", "1.0.2")])
+        with self.assertRaisesRegex(configure.DepsError, "pins vmem==1.0.3, but .* pins vmem==1.0.2"):
+            configure.check_source_pins([("vmem", "1.0.3")], [("vmem", "1.0.2")])
+        with self.assertRaisesRegex(configure.DepsError, "no vmem for Windows"):
+            configure.check_source_pins([("vmem", "1.0.2")], [("numpy", "2.3.2")])
+
+    def test_wheel_requirements_leave_out_the_source_pins(self):
+        requirements = Path(self.tmp.name) / "requirements.txt"
+        requirements.write_text("numpy==2.3.2\nVMem==1.0.2  # source\nsix==1.17.0\n")
+        dest = configure.write_wheel_requirements(str(requirements), [("vmem", "1.0.2")],
+                                                  str(Path(self.tmp.name) / "wheels.txt"))
+        self.assertEqual(Path(dest).read_text(), "numpy==2.3.2\nsix==1.17.0\n")
+
+
+@unittest.skipUnless(SOURCE_PINS_FILE.exists(), "the source pins are a SuperBuild file; unit CI has the last release's copy")
+class TestCommittedSourcePins(unittest.TestCase):
+    def test_vmem_is_pinned_by_its_sdist_at_the_version_of_requirements(self):
+        self.assertEqual(configure.load_source_pins(str(SOURCE_PINS_FILE)), [("vmem", "1.0.2")])
+        self.assertIn("--hash=sha256:%s" % VMEM_SDIST_SHA256, SOURCE_PINS_FILE.read_text())
+        configure.check_source_pins(configure.load_source_pins(str(SOURCE_PINS_FILE)),
+                                    configure.read_requirements(str(ROOT / "requirements.txt"), "win32"))
+
+
+class TestPipCommands(unittest.TestCase):
+    def test_wheels_only_into_the_package_site_packages(self):
+        cmd = configure.pip_wheels_command("py.exe", "site", "req.txt")
+        self.assertEqual(cmd[:4], ["py.exe", "-m", "pip", "install"])
+        self.assertEqual(cmd[cmd.index("--only-binary") + 1], ":all:")
+        self.assertNotIn("--no-binary", cmd)
+        self.assertEqual(cmd[cmd.index("--target") + 1], "site")
+        self.assertEqual(cmd[-2:], ["-r", "req.txt"])
+        self.assertIn("--no-compile", cmd)
+
+    def test_source_pins_are_built_from_their_hashed_sdist_only(self):
+        cmd = configure.pip_source_command("py.exe", "site", [("vmem", "1.0.2")], "source.txt")
+        self.assertEqual(cmd[:4], ["py.exe", "-m", "pip", "install"])
+        self.assertIn("--require-hashes", cmd)
+        self.assertIn("--no-deps", cmd)
+        self.assertEqual(cmd[cmd.index("--no-binary") + 1], "vmem")
+        self.assertNotIn("--only-binary", cmd)
+        self.assertEqual(cmd[cmd.index("--target") + 1], "site")
+        self.assertEqual(cmd[-2:], ["-r", "source.txt"])
+
+
+class TestMinimalPath(unittest.TestCase):
+    def test_path_is_the_folders_then_windows(self):
+        env = configure.minimal_path_environment(
+            {"Path": r"C:\Emulator;C:\Windows\System32", "SystemRoot": r"D:\Win", "TEMP": "t"},
+            [r"C:\pkg\python", r"C:\pkg\bin"])
+        self.assertEqual(env["PATH"].split(";"), [r"C:\pkg\python", r"C:\pkg\bin", r"D:\Win\System32",
+                                                  r"D:\Win", r"D:\Win\System32\Wbem"])
+        self.assertNotIn("Path", env)
+        self.assertEqual(env["TEMP"], "t")
+
+    def test_windows_folder_defaults_when_system_root_is_unset(self):
+        env = configure.minimal_path_environment({}, [])
+        self.assertEqual(env["PATH"].split(";")[0], r"C:\Windows\System32")
+
+
+class TestReplaceSqlite(unittest.TestCase):
+    def test_export_sqlite_replaces_the_embedded_one(self):
+        with tempfile.TemporaryDirectory() as folder:
+            python_dir, export_bin = Path(folder) / "python", Path(folder) / "bin"
+            python_dir.mkdir()
+            export_bin.mkdir()
+            (python_dir / "sqlite3.dll").write_bytes(b"embedded")
+            (export_bin / "SQLite3.dll").write_bytes(b"export")
+            with contextlib.redirect_stdout(io.StringIO()):
+                configure.replace_sqlite(str(python_dir), str(export_bin))
+            self.assertEqual((python_dir / "sqlite3.dll").read_bytes(), b"export")
+
+    def test_missing_sqlite_stops_the_build(self):
+        with tempfile.TemporaryDirectory() as folder:
+            python_dir = Path(folder)
+            (python_dir / "sqlite3.dll").write_bytes(b"embedded")
+            with self.assertRaisesRegex(configure.DepsError, "has no sqlite3.dll"):
+                configure.replace_sqlite(str(python_dir), str(python_dir / "bin"))
+
+
+def make_dist(site_packages, name, version):
+    info = Path(site_packages) / ("%s-%s.dist-info" % (name, version))
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text("Metadata-Version: 2.1\nName: %s\nVersion: %s\n" % (name, version))
+
+
+class TestEmbeddedPythonCheck(unittest.TestCase):
+    """Runs the check this script hands to the package's Python, here in the
+    Python that runs the tests, against a fake site-packages."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.site = os.path.join(self.tmp.name, "Lib", "site-packages")
+        make_dist(self.site, "alpha", "1.0")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_check(self, pins, version=None, extra_path=()):
+        args = {"version": version or platform.python_version(), "site_packages": self.site,
+                "pins": pins, "imports": ["json"], "sqlite_dll": "unused"}
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([self.site] + list(extra_path)))
+        return subprocess.run([sys.executable, "-c", configure.EMBEDDED_PYTHON_CHECK, json.dumps(args)],
+                              env=env, capture_output=True, text=True)
+
+    def test_installed_pins_pass_and_are_listed(self):
+        result = self.run_check([["alpha", "1.0"]])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Installed alpha==1.0 in %s" % self.site, result.stdout)
+        self.assertIn("Imported json", result.stdout)
+        self.assertRegex(result.stdout, r"SQLite \d+\.\d+\.\d+ opened a database")
+
+    def test_other_version_fails(self):
+        result = self.run_check([["alpha", "2.0"]])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Error: alpha is 1.0, but requirements.txt pins 2.0", result.stdout)
+
+    def test_missing_pin_fails(self):
+        result = self.run_check([["alpha", "1.0"], ["beta", "3.0"]])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Error: beta==3.0 is not installed", result.stdout)
+
+    def test_pin_outside_the_package_site_packages_fails(self):
+        other = os.path.join(self.tmp.name, "elsewhere")
+        make_dist(other, "beta", "3.0")
+        result = self.run_check([["beta", "3.0"]], extra_path=[other])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Error: beta==3.0 is in %s, not in %s" % (other, self.site), result.stdout)
+
+    def test_other_python_version_fails(self):
+        result = self.run_check([["alpha", "1.0"]], version="3.0.0")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not 3.0.0", result.stdout)
+
+
+class FakePythonTools:
+    """Stands in for subprocess.run: plays pip and the package's Python.
+
+    pip "installs" by writing a dist-info for each pin into its --target
+    folder. The package's Python records what sqlite3.dll holds when it runs.
+    """
+
+    def __init__(self, pip_exit=0, check_exit=0):
+        self.pip_exit = pip_exit
+        self.check_exit = check_exit
+        self.calls = []
+        self.requirements_seen = []
+        self.sqlite_at_check = None
+
+    def __call__(self, cmd, **kwargs):
+        self.calls.append((list(cmd), kwargs))
+        if cmd[1:4] == ["-m", "pip", "install"]:
+            self.requirements_seen.append(Path(cmd[-1]).read_text())
+            if self.pip_exit == 0:
+                target = cmd[cmd.index("--target") + 1]
+                if "--require-hashes" in cmd:
+                    pins = configure.load_source_pins(cmd[-1])
+                else:
+                    pins = configure.read_requirements(cmd[-1], platform_name="win32")
+                for name, version in pins:
+                    make_dist(target, name, version)
+            return SimpleNamespace(returncode=self.pip_exit)
+        self.sqlite_at_check = Path(kwargs["cwd"], "sqlite3.dll").read_bytes()
+        return SimpleNamespace(returncode=self.check_exit)
+
+    def pip_calls(self):
+        return [cmd for cmd, _ in self.calls if cmd[1:4] == ["-m", "pip", "install"]]
+
+
+class TestPreparePython(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.archive = root / "python-3.12.10-embed-amd64.zip"
+        with zipfile.ZipFile(self.archive, "w") as z:
+            z.writestr("python.exe", "exe")
+            z.writestr("sqlite3.dll", "embedded sqlite")
+            z.writestr("python312._pth", PUBLISHER_PTH.read_bytes())
+        self.export_dir = root / "vcpkg"
+        bin_dir = self.export_dir / "installed" / "x64-windows-avx2" / "bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "sqlite3.dll").write_bytes(b"export sqlite")
+        self.export_bin = str(bin_dir)
+        self.python_dir = root / "python"
+        self.requirements = root / "requirements.txt"
+        self.requirements.write_text("numpy==2.3.2\nvmem==1.0.2\ngdal==3.8.4 ; sys_platform == 'linux'\n")
+        self.source_pins = write_source_pins(self.tmp.name, "vmem==1.0.2 --hash=sha256:%s\n" % VMEM_SDIST_SHA256)
+        self.pin = make_pin()
+        self.pin["assets"]["python"]["file"] = self.archive.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def prepare(self, tools):
+        with contextlib.redirect_stdout(io.StringIO()):
+            configure.prepare_python(self.pin, str(self.archive), export_dir=str(self.export_dir),
+                                     python_dir=str(self.python_dir), requirements=str(self.requirements),
+                                     source_pins_file=self.source_pins,
+                                     python="runner-python", env={"Path": r"C:\Emulator", "SystemRoot": r"C:\W"},
+                                     runner=tools)
+
+    def test_layout_wheels_sqlite_and_check(self):
+        tools = FakePythonTools()
+        self.prepare(tools)
+        site = self.python_dir / "Lib" / "site-packages"
+        self.assertTrue((site / "numpy-2.3.2.dist-info").is_dir())
+        self.assertTrue((site / "vmem-1.0.2.dist-info").is_dir())
+        self.assertFalse((site / "gdal-3.8.4.dist-info").exists())
+        self.assertIn(b"\r\nLib\\site-packages\r\n", (self.python_dir / "python312._pth").read_bytes())
+        self.assertIn(b"\r\nimport site\r\n", (self.python_dir / "python312._pth").read_bytes())
+        wheels, source = tools.pip_calls()
+        self.assertEqual(wheels[0], "runner-python")
+        self.assertEqual(wheels[wheels.index("--target") + 1], str(site))
+        self.assertEqual(source[source.index("--target") + 1], str(site))
+        self.assertIn("--only-binary", wheels)
+        self.assertEqual(tools.requirements_seen[0], "numpy==2.3.2\ngdal==3.8.4 ; sys_platform == 'linux'\n")
+        self.assertIn("--require-hashes", source)
+        self.assertEqual(source[-1], self.source_pins)
+        self.assertEqual(tools.sqlite_at_check, b"export sqlite")
+
+        check, kwargs = tools.calls[-1]
+        self.assertEqual(check[:3], [str(self.python_dir / "python.exe"), "-c", configure.EMBEDDED_PYTHON_CHECK])
+        args = json.loads(check[3])
+        self.assertEqual(args["version"], "3.12.10")
+        self.assertEqual(args["site_packages"], str(site))
+        self.assertEqual(args["pins"], [["numpy", "2.3.2"], ["vmem", "1.0.2"]])
+        self.assertEqual(args["imports"], ["numpy"])
+        self.assertEqual(kwargs["env"]["PATH"].split(";"), [str(self.python_dir), self.export_bin, r"C:\W\System32",
+                                                            r"C:\W", r"C:\W\System32\Wbem"])
+
+    def test_same_pin_and_requirements_reuse_the_layout(self):
+        self.prepare(FakePythonTools())
+        tools = FakePythonTools()
+        self.prepare(tools)
+        self.assertEqual(tools.pip_calls(), [])
+        self.assertEqual(tools.sqlite_at_check, b"export sqlite")
+
+    def test_changed_requirements_lay_out_python_again(self):
+        self.prepare(FakePythonTools())
+        stale = self.python_dir / "Lib" / "site-packages" / "stale.py"
+        stale.write_text("")
+        self.requirements.write_text("numpy==2.3.3\nvmem==1.0.2\n")
+        tools = FakePythonTools()
+        self.prepare(tools)
+        self.assertEqual(len(tools.pip_calls()), 2)
+        self.assertFalse(stale.exists())
+
+    def make_built_tree(self):
+        """A SuperBuild tree where opencv and ceres have built and installed,
+        with the stamps a multi-config generator writes. OpenCV's install
+        manifest names cv2 in python/ the way CMake writes it on Windows,
+        with forward slashes and the SuperBuild folder in the path."""
+        root = Path(self.tmp.name) / "SuperBuild"
+        stamps = {}
+        for name, installed in (("opencv", "%s/SuperBuild/../python/lib/site-packages/cv2/__init__.py"
+                                 % Path(self.tmp.name).as_posix()),
+                                ("ceres", "%s/install/lib/ceres.lib" % root.as_posix())):
+            stamps[name] = root / "build" / name / "stamp" / "Release"
+            stamps[name].mkdir(parents=True)
+            for step in ("download", "configure", "build", "install", "done"):
+                (stamps[name] / ("%s-%s" % (name, step))).write_text("")
+            (root / "build" / name / "install_manifest.txt").write_text(installed + "\n")
+        (root / "install").mkdir()
+        return root / "build", root / "install", stamps
+
+    def decide(self, build_dir, install_dir):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return configure.superbuild_needed(str(self.python_dir), str(build_dir), str(install_dir))
+
+    def test_new_layout_after_a_superbuild_installs_its_python_modules_again(self):
+        build_dir, install_dir, stamps = self.make_built_tree()
+        self.prepare(FakePythonTools())
+        self.assertTrue(self.decide(build_dir, install_dir))
+        configure.superbuild_done(str(self.python_dir))
+        (stamps["opencv"] / "opencv-install").write_text("")
+        cv2 = self.python_dir / "Lib" / "site-packages" / "cv2"
+        cv2.mkdir()
+
+        self.prepare(FakePythonTools())
+        self.assertTrue(cv2.exists())
+        self.assertFalse(self.decide(build_dir, install_dir))
+
+        self.requirements.write_text("numpy==2.3.2\nvmem==1.0.2\n# a comment\n")
+        self.prepare(FakePythonTools())
+        self.assertFalse(cv2.exists())
+        self.assertTrue(self.decide(build_dir, install_dir))
+        self.assertFalse((stamps["opencv"] / "opencv-install").exists())
+        self.assertTrue((stamps["opencv"] / "opencv-build").exists())
+        self.assertTrue((stamps["opencv"] / "opencv-done").exists())
+        self.assertTrue((stamps["ceres"] / "ceres-install").exists())
+
+    def test_failed_superbuild_after_a_new_layout_is_run_again(self):
+        build_dir, install_dir, stamps = self.make_built_tree()
+        self.prepare(FakePythonTools())
+        self.assertTrue(self.decide(build_dir, install_dir))
+        (stamps["opencv"] / "opencv-install").write_text("")
+        self.prepare(FakePythonTools())
+        self.assertTrue(self.decide(build_dir, install_dir))
+        self.assertFalse((stamps["opencv"] / "opencv-install").exists())
+
+    def test_fresh_tree_builds_and_reused_layout_with_a_built_tree_does_not(self):
+        self.prepare(FakePythonTools())
+        configure.superbuild_done(str(self.python_dir))
+        root = Path(self.tmp.name) / "SuperBuild"
+        self.assertTrue(self.decide(root / "build", root / "install"))
+        build_dir, install_dir, _ = self.make_built_tree()
+        self.assertFalse(self.decide(build_dir, install_dir))
+
+    def test_failed_pip_stops_and_leaves_no_marker(self):
+        with self.assertRaisesRegex(configure.DepsError, "pip did not install"):
+            self.prepare(FakePythonTools(pip_exit=1))
+        self.assertFalse((self.python_dir / configure.PYTHON_MARKER).exists())
+
+    def test_source_pin_of_another_version_stops_before_pip(self):
+        self.requirements.write_text("numpy==2.3.2\nvmem==1.0.3\n")
+        tools = FakePythonTools()
+        with self.assertRaisesRegex(configure.DepsError, "pins vmem==1.0.2, but .* pins vmem==1.0.3"):
+            self.prepare(tools)
+        self.assertEqual(tools.calls, [])
+
+    def test_check_after_the_superbuild_imports_cv2_with_its_dlls_on_path(self):
+        tools = FakePythonTools()
+        (self.python_dir).mkdir()
+        (self.python_dir / "sqlite3.dll").write_bytes(b"export sqlite")
+        configure.check_embedded_python(str(self.python_dir), self.export_bin, [("numpy", "2.3.2")], "3.12.10",
+                                        {"SystemRoot": r"C:\W"}, runner=tools,
+                                        imports=configure.SUPERBUILD_PYTHON_IMPORTS,
+                                        dll_folders=[r"C:\aidm\SuperBuild\install\bin"])
+        check, kwargs = tools.calls[-1]
+        self.assertEqual(json.loads(check[3])["imports"], ["numpy", "cv2"])
+        self.assertEqual(kwargs["env"]["PATH"].split(";")[:3],
+                         [str(self.python_dir), r"C:\aidm\SuperBuild\install\bin", self.export_bin])
+
+    def test_failed_check_stops_the_build(self):
+        with self.assertRaisesRegex(configure.DepsError, "failed its check, exit code 1"):
+            self.prepare(FakePythonTools(check_exit=1))
+
+
+class TestBuildThenCheck(unittest.TestCase):
+    def run_steps(self, build_error=None, check_error=None):
+        calls = []
+
+        def step(name, error):
+            def run():
+                calls.append(name)
+                if error:
+                    raise configure.DepsError(error)
+            return run
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            try:
+                configure.build_then_check(step("build", build_error), step("check", check_error))
+                raised = None
+            except configure.DepsError as e:
+                raised = str(e)
+        return calls, raised, out.getvalue()
+
+    def test_both_pass(self):
+        self.assertEqual(self.run_steps(), (["build", "check"], None, ""))
+
+    def test_check_runs_after_a_failed_build_and_the_build_failure_is_raised(self):
+        calls, raised, out = self.run_steps(build_error="dem2points failed", check_error="no cv2")
+        self.assertEqual(calls, ["build", "check"])
+        self.assertEqual(raised, "dem2points failed")
+        self.assertIn("Error: no cv2", out)
+
+    def test_failed_check_after_a_good_build_is_raised(self):
+        self.assertEqual(self.run_steps(check_error="no cv2")[1], "no cv2")
 
 
 class TestDownloadSources(unittest.TestCase):
