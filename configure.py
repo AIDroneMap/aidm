@@ -944,12 +944,6 @@ def build(variant=DEFAULT_VARIANT):
     roots = [SUPERBUILD_INSTALL, PYTHON_DIR]
     if variant == "cuda":
         bundle_cuda_runtime(SUPERBUILD_BIN, roots, os.path.join(cuda_folder, "bin"))
-    # DELIBERATE BREAK for the first dry run of #125, reverted by the next
-    # commit: a CUDA runtime DLL in a cpu build must stop it.
-    if variant == "cpu":
-        print("Deliberate break of #125: writing cudart64_12.dll into %s" % SUPERBUILD_BIN)
-        with open(os.path.join(SUPERBUILD_BIN, "cudart64_12.dll"), "wb") as f:
-            f.write(b"deliberate break, not a DLL\n")
     check_variant_dlls(variant, roots, SUPERBUILD_BIN)
 
 
