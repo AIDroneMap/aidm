@@ -11,6 +11,8 @@ import unittest
 PATCH = Path(__file__).resolve().parents[1] / "cmake/OpenMVSWeightedPatch.cmake"
 RECIPE = Path(__file__).resolve().parents[1] / "cmake/External-OpenMVS.cmake"
 WIDTH_PATCH = Path(__file__).resolve().parents[2] / "docker/patch_openmvs.py"
+EQUIVALENCE_TEST = Path(__file__).resolve().parent / "WeightedPatchTest.cpp"
+HEADER = Path(__file__).resolve().parent / "WeightedPatch.h"
 
 
 @unittest.skipUnless(PATCH.exists() and shutil.which("cmake"),
@@ -85,6 +87,85 @@ class TestOpenMVSPatchStep(unittest.TestCase):
         self.assertNotEqual(weighted, -1, "weighted patch kernel is missing")
         self.assertTrue(width < chained < weighted,
                         "the weighted patch must be a second COMMAND of the patch step")
+
+
+GCC = shutil.which("g++") or shutil.which("c++")
+MSVC = shutil.which("cl")
+
+
+@unittest.skipUnless(EQUIVALENCE_TEST.exists() and (GCC or MSVC),
+                     "the equivalence test source and a C++ preprocessor are needed")
+class TestScalarReferenceDeclaration(unittest.TestCase):
+    """The scalar reference of WeightedPatchTest.cpp is declared for the compiler at hand.
+
+    Only the preprocessor runs. The includes are dropped, so the standard
+    library of the host does not matter. GCC gets the MSVC branch by defining
+    _MSC_VER; on a machine with cl the real preprocessor is used.
+    """
+
+    def preprocess(self, msvc):
+        lines = [line for line in EQUIVALENCE_TEST.read_text().splitlines()
+                 if not line.startswith("#include")]
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "reference.cpp"
+            source.write_text("\n".join(lines) + "\n")
+            if MSVC and msvc:
+                command = [MSVC, "/nologo", "/EP", str(source)]
+            elif GCC:
+                command = [GCC, "-E", "-P", "-x", "c++"]
+                command += ["-D_MSC_VER=1951"] if msvc else []
+                command += [str(source)]
+            else:
+                self.skipTest("the GCC branch needs g++")
+            result = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return "".join(result.stdout.split())
+
+    def test_msvc_gets_declspec_and_no_optimizer_around_the_reference(self):
+        text = self.preprocess(msvc=True)
+        self.assertNotIn("__attribute__", text, "MSVC has no __attribute__")
+        declaration = text.find("__declspec(noinline)boolscalarPatch(")
+        self.assertNotEqual(declaration, -1, "the reference is not declared noinline")
+        off = text.find('#pragmaoptimize("",off)')
+        on = text.find('#pragmaoptimize("",on)')
+        self.assertTrue(-1 < off < declaration < on,
+                        "the optimizer must be off from before the reference to after it")
+        self.assertLess(on, text.find("voidcheck("), "the optimizer must be back on after it")
+        self.assertEqual(text.count("#pragmaoptimize"), 2)
+
+    def test_gcc_keeps_its_attributes_and_no_msvc_text(self):
+        if MSVC and not GCC:
+            self.skipTest("the GCC branch needs g++")
+        text = self.preprocess(msvc=False)
+        self.assertIn('__attribute__((noinline,optimize("no-tree-vectorize")))boolscalarPatch(',
+                      text)
+        self.assertNotIn("__declspec", text)
+        self.assertNotIn("#pragma", text)
+
+
+@unittest.skipUnless(RECIPE.exists() and HEADER.exists(), "the OpenMVS recipe is needed")
+class TestOpenMVSOpenMPFlag(unittest.TestCase):
+    """The header uses `omp simd`, which MSVC compiles only with /openmp:experimental."""
+
+    def recipe(self):
+        return RECIPE.read_text()
+
+    def test_header_uses_omp_simd(self):
+        self.assertIn("#pragma omp simd", HEADER.read_text(),
+                      "the MSVC OpenMP flag of the recipe is no longer needed")
+
+    def test_windows_asks_findopenmp_for_the_experimental_runtime(self):
+        recipe = self.recipe()
+        match = re.search(r"if\(WIN32\)\s*set\(_openmvs_openmp_args "
+                          r"-DOpenMP_RUNTIME_MSVC=experimental\)\s*endif\(\)", recipe)
+        self.assertIsNotNone(match, "the recipe must set the experimental OpenMP runtime on Windows")
+
+    def test_openmvs_receives_the_argument(self):
+        recipe = self.recipe()
+        configure = recipe[recipe.index("ExternalProject_Add(${_proj_name}"):]
+        self.assertIn("${_openmvs_openmp_args}", configure.split("#--Build step")[0])
+        # Only the Windows branch sets it: Linux compilers do not read the variable.
+        self.assertEqual(recipe.count("-DOpenMP_RUNTIME_MSVC=experimental"), 1)
 
 
 @unittest.skipUnless(RECIPE.exists() and WIDTH_PATCH.exists() and shutil.which("git"),

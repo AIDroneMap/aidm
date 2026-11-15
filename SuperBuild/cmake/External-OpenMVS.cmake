@@ -58,6 +58,16 @@ else()
   set(_openmvs_opencv_dir "${SB_INSTALL_DIR}/lib/cmake/opencv4")
 endif()
 
+# The weighted patch header uses `#pragma omp simd`. MSVC accepts that pragma
+# only with /openmp:experimental, and stops with error C7660 under the plain
+# /openmp that OpenMVS gets from FindOpenMP. FindOpenMP picks the experimental
+# flag from OpenMP_RUNTIME_MSVC (CMake 3.30 and later; the Windows build runs
+# the pinned CMake). Linux compilers do not read the variable.
+set(_openmvs_openmp_args "")
+if(WIN32)
+  set(_openmvs_openmp_args -DOpenMP_RUNTIME_MSVC=experimental)
+endif()
+
 ExternalProject_Add(${_proj_name}
   DEPENDS           ceres opencv vcg eigen34
   PREFIX            ${_SB_BINARY_DIR}
@@ -86,6 +96,7 @@ ExternalProject_Add(${_proj_name}
     -DCMAKE_INSTALL_PREFIX=${SB_INSTALL_DIR}
     -DOpenMVS_ENABLE_TESTS=OFF
     -DOpenMVS_MAX_CUDA_COMPATIBILITY=ON
+    ${_openmvs_openmp_args}
     ${GPU_CMAKE_ARGS}
     ${WIN32_CMAKE_ARGS}
     ${ARM64_CMAKE_ARGS}
