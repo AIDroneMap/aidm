@@ -331,16 +331,25 @@ def default_generator(cmake, env, runner=subprocess.run):
     return generator
 
 
-def superbuild_environment(env, cmake, python=None):
+def superbuild_environment(env, cmake, python=None, site_packages=None):
     """Return a copy of env for the SuperBuild: the AVX2 flag, the policy
     minimum, the pinned cmake first on PATH for any step that calls cmake
     by name, and in AIDM_PYTHON_EXECUTABLE the Python that tools compile
     against. The embeddable package has no headers and no import library,
-    so they use the Python that runs this script, of the same version."""
+    so they use the Python that runs this script, of the same version.
+
+    That Python has none of the wheels of the package. PYTHONPATH gives it
+    the package's site-packages, so a build step that imports numpy, as
+    OpenCV's Python detection does, finds the one the package ships.
+    """
     env = msvc_environment(env)
     env["CMAKE_POLICY_VERSION_MINIMUM"] = CMAKE_POLICY_VERSION_MINIMUM
     if python:
         env["AIDM_PYTHON_EXECUTABLE"] = python
+    if site_packages:
+        for key in [key for key in env if key.upper() == "PYTHONPATH"]:
+            del env[key]
+        env["PYTHONPATH"] = site_packages
     # A Windows environment copied into a dict may spell it Path.
     path_key = next((key for key in env if key.upper() == "PATH"), "PATH")
     current = env.get(path_key, "")
@@ -676,22 +685,28 @@ sys.exit(1 if failures else 0)
 """
 
 # Modules the check imports in the package's Python: numpy is the compiled
-# wheel most of the engine loads.
+# wheel most of the engine loads. After the SuperBuild, cv2 too: OpenCV
+# installs its Python module into the package's site-packages.
 EMBEDDED_PYTHON_IMPORTS = ("numpy",)
+SUPERBUILD_PYTHON_IMPORTS = ("numpy", "cv2")
+SUPERBUILD_BIN = os.path.join(ROOT, "SuperBuild", "install", "bin")
 
 
-def check_embedded_python(python_dir, export_bin, pins, version, env, runner=subprocess.run):
-    """Run EMBEDDED_PYTHON_CHECK in the package's Python with the minimal PATH."""
+def check_embedded_python(python_dir, export_bin, pins, version, env, runner=subprocess.run,
+                          imports=EMBEDDED_PYTHON_IMPORTS, dll_folders=()):
+    """Run EMBEDDED_PYTHON_CHECK in the package's Python with the minimal PATH:
+    python_dir, then dll_folders, then the export's bin and Windows."""
     args = {
         "version": version,
         "site_packages": os.path.join(python_dir, SITE_PACKAGES),
         "pins": [list(pin) for pin in pins],
-        "imports": list(EMBEDDED_PYTHON_IMPORTS),
+        "imports": list(imports),
         "sqlite_dll": os.path.join(python_dir, "sqlite3.dll"),
     }
     cmd = [os.path.join(python_dir, "python.exe"), "-c", EMBEDDED_PYTHON_CHECK, json.dumps(args)]
-    print("Checking the package's Python with PATH limited to it, the export and Windows")
-    result = runner(cmd, cwd=python_dir, env=minimal_path_environment(env, [python_dir, export_bin]))
+    folders = [python_dir] + list(dll_folders) + [export_bin]
+    print("Checking the package's Python with PATH limited to %s and Windows" % ", ".join(folders))
+    result = runner(cmd, cwd=python_dir, env=minimal_path_environment(env, folders))
     if result.returncode != 0:
         raise DepsError("the package's Python in %s failed its check, exit code %s"
                         % (python_dir, result.returncode))
@@ -776,15 +791,47 @@ def build():
     unpack_export(pin, assets["export"])
     check_build_python(pin)
     prepare_python(pin, assets["python"])
+    site_packages = os.path.join(PYTHON_DIR, SITE_PACKAGES)
 
     cmake = install_cmake()
-    env = superbuild_environment(os.environ, cmake, sys.executable)
+    env = superbuild_environment(os.environ, cmake, sys.executable, site_packages)
     print("CL=%s" % env["CL"])
+    print("PYTHONPATH=%s" % env["PYTHONPATH"])
     report_toolset(env)
 
     build_dir = os.path.join(ROOT, "SuperBuild", "build")
-    if not os.path.exists(build_dir) or not os.path.exists(os.path.join(ROOT, "SuperBuild", "install")):
-        build_superbuild(cmake, load_cmake_pin(), build_dir, env)
+
+    def superbuild():
+        if not os.path.exists(build_dir) or not os.path.exists(os.path.join(ROOT, "SuperBuild", "install")):
+            build_superbuild(cmake, load_cmake_pin(), build_dir, env)
+
+    def check():
+        check_embedded_python(PYTHON_DIR, os.path.join(EXPORT_DIR, "installed", pin["triplet"], "bin"),
+                              read_requirements(platform_name="win32"), embeddable_python_version(pin),
+                              os.environ, imports=SUPERBUILD_PYTHON_IMPORTS, dll_folders=[SUPERBUILD_BIN])
+
+    build_then_check(superbuild, check)
+
+
+def build_then_check(build_step, check_step):
+    """Run build_step, then check_step even when build_step failed, so the
+    log shows what the SuperBuild installed in the package's Python before
+    it stopped. The first failure is the one raised."""
+    failure = None
+    try:
+        build_step()
+    except DepsError as e:
+        failure = e
+        print("Error: %s" % e)
+        print("Checking the package's Python anyway, for the modules the SuperBuild installed")
+    try:
+        check_step()
+    except DepsError as e:
+        if failure is None:
+            raise
+        print("Error: %s" % e)
+    if failure is not None:
+        raise failure
 
 
 def clean():

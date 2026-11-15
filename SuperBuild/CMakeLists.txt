@@ -145,6 +145,17 @@ if (WIN32)
                         "Run python configure.py build, which sets both.")
   endif()
   file(TO_CMAKE_PATH "${PYTHON_EXE_PATH}" PYTHON_EXE_PATH)
+  # The headers and import library of that Python. The deps export also
+  # holds a python312.lib, from the Python 3.12.9 its pybind11 port brings,
+  # which the vcpkg toolchain finds first. Tools that look for Python's
+  # libraries get these two paths instead.
+  get_filename_component(_aidm_python_root "${PYTHON_EXE_PATH}" DIRECTORY)
+  set(AIDM_PYTHON_INCLUDE_DIR "${_aidm_python_root}/include")
+  set(AIDM_PYTHON_LIBRARY "${_aidm_python_root}/libs/python312.lib")
+  if (NOT EXISTS "${AIDM_PYTHON_INCLUDE_DIR}/Python.h" OR NOT EXISTS "${AIDM_PYTHON_LIBRARY}")
+    message(FATAL_ERROR "${CMAKE_CURRENT_LIST_FILE}: ${PYTHON_EXE_PATH} has no ${AIDM_PYTHON_INCLUDE_DIR}/Python.h "
+                        "or no ${AIDM_PYTHON_LIBRARY}. configure.py needs a full Python 3.12 install, not an embeddable one.")
+  endif()
 
   # Use the GDAL version that comes with pip
   set(GDAL_ROOT "${PYTHON_HOME}/Lib/site-packages/osgeo")

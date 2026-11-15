@@ -464,6 +464,13 @@ class TestSuperbuildEnvironment(unittest.TestCase):
         self.assertEqual(env["AIDM_PYTHON_EXECUTABLE"], r"C:\py312\python.exe")
         self.assertNotIn("AIDM_PYTHON_EXECUTABLE", configure.superbuild_environment({}, self.cmake))
 
+    def test_build_python_sees_only_the_package_site_packages(self):
+        env = configure.superbuild_environment({"PATH": "system", "PythonPath": r"C:\elsewhere"}, self.cmake,
+                                               r"C:\py312\python.exe", r"C:\aidm\python\Lib\site-packages")
+        self.assertEqual(env["PYTHONPATH"], r"C:\aidm\python\Lib\site-packages")
+        self.assertNotIn("PythonPath", env)
+        self.assertNotIn("PYTHONPATH", configure.superbuild_environment({}, self.cmake, r"C:\py312\python.exe"))
+
 class TestBuildSuperbuild(unittest.TestCase):
     cmake = os.path.join("pinned", "cmake", "data", "bin", "cmake.exe")
 
@@ -941,9 +948,55 @@ class TestPreparePython(unittest.TestCase):
             self.prepare(tools)
         self.assertEqual(tools.calls, [])
 
+    def test_check_after_the_superbuild_imports_cv2_with_its_dlls_on_path(self):
+        tools = FakePythonTools()
+        (self.python_dir).mkdir()
+        (self.python_dir / "sqlite3.dll").write_bytes(b"export sqlite")
+        configure.check_embedded_python(str(self.python_dir), self.export_bin, [("numpy", "2.3.2")], "3.12.10",
+                                        {"SystemRoot": r"C:\W"}, runner=tools,
+                                        imports=configure.SUPERBUILD_PYTHON_IMPORTS,
+                                        dll_folders=[r"C:\aidm\SuperBuild\install\bin"])
+        check, kwargs = tools.calls[-1]
+        self.assertEqual(json.loads(check[3])["imports"], ["numpy", "cv2"])
+        self.assertEqual(kwargs["env"]["PATH"].split(";")[:3],
+                         [str(self.python_dir), r"C:\aidm\SuperBuild\install\bin", self.export_bin])
+
     def test_failed_check_stops_the_build(self):
         with self.assertRaisesRegex(configure.DepsError, "failed its check, exit code 1"):
             self.prepare(FakePythonTools(check_exit=1))
+
+
+class TestBuildThenCheck(unittest.TestCase):
+    def run_steps(self, build_error=None, check_error=None):
+        calls = []
+
+        def step(name, error):
+            def run():
+                calls.append(name)
+                if error:
+                    raise configure.DepsError(error)
+            return run
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            try:
+                configure.build_then_check(step("build", build_error), step("check", check_error))
+                raised = None
+            except configure.DepsError as e:
+                raised = str(e)
+        return calls, raised, out.getvalue()
+
+    def test_both_pass(self):
+        self.assertEqual(self.run_steps(), (["build", "check"], None, ""))
+
+    def test_check_runs_after_a_failed_build_and_the_build_failure_is_raised(self):
+        calls, raised, out = self.run_steps(build_error="dem2points failed", check_error="no cv2")
+        self.assertEqual(calls, ["build", "check"])
+        self.assertEqual(raised, "dem2points failed")
+        self.assertIn("Error: no cv2", out)
+
+    def test_failed_check_after_a_good_build_is_raised(self):
+        self.assertEqual(self.run_steps(check_error="no cv2")[1], "no cv2")
 
 
 class TestDownloadSources(unittest.TestCase):

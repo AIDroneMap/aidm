@@ -5,6 +5,8 @@ if (WIN32)
   set(OCV_CMAKE_EXTRA_ARGS -DPYTHON3_NUMPY_INCLUDE_DIRS=${PYTHON_HOME}/lib/site-packages/numpy/_core/include
                              -DPYTHON3_PACKAGES_PATH=${PYTHON_HOME}/lib/site-packages
                              -DPYTHON3_EXECUTABLE=${PYTHON_EXE_PATH}
+                             -DPYTHON3_INCLUDE_DIR=${AIDM_PYTHON_INCLUDE_DIR}
+                             -DPYTHON3_LIBRARY=${AIDM_PYTHON_LIBRARY}
                              -DWITH_MSMF=OFF
                              -DOPENCV_LIB_INSTALL_PATH=${SB_INSTALL_DIR}/lib
                              -DOPENCV_BIN_INSTALL_PATH=${SB_INSTALL_DIR}/bin)
