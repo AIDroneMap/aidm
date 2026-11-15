@@ -36,13 +36,17 @@ if(UNIX)
     endif()
 endif()
 
+# On Windows the variant decides CUDA (ADR 0006). The cpu variant builds
+# OpenMVS without CUDA, so its tools import no CUDA DLL and need no driver.
+# The cuda variant requires the CUDA toolkit: AIDM_CUDA_ARGS makes OpenMVS's
+# find_package(CUDA) stop the configure step when it does not find one,
+# instead of building without CUDA. Linux keeps finding the toolkit itself.
 if(WIN32)
-  # On Windows systems without NVIDIA GPUs, OpenMVS will not launch
-  # unless a CUDA DLL is available; we download a dummy DLL 
-  # generated with https://github.com/ykhwong/dummy-dll-generator that is 
-  # loaded UNLESS the real CUDA DLL is available, since it will
-  # be loaded before our dummy DLL.
-  file(DOWNLOAD "https://github.com/WebODM/windows-deps/releases/download/v3.7.0/nvcuda_dummy.dll" "${SB_INSTALL_DIR}/bin/nvcuda.dll")
+  if(AIDM_WINDOWS_VARIANT STREQUAL "cuda")
+    SET(GPU_CMAKE_ARGS -DOpenMVS_USE_CUDA=ON ${AIDM_CUDA_ARGS})
+  else()
+    SET(GPU_CMAKE_ARGS -DOpenMVS_USE_CUDA=OFF)
+  endif()
 endif()
 
 # OpenMVS reads OpenCV's config from one folder. On Windows that is the folder

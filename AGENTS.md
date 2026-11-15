@@ -30,7 +30,7 @@ AIDM is the engine only. Scheduling, cloud provider connectors and the web inter
 | `docs/` | Documentation; specs go in `docs/specs/`, decisions in `docs/adr/`, design notes in `docs/design/` |
 | `GLOSSARY.md` | The words the documentation, specs and pull requests use for how the engine is built, tested and released |
 
-The Windows and macOS build files inherited from ODX were removed in 0.1.0. `configure.py` is the Windows build script of AIDM. It downloads the Windows dependencies release pinned in `SuperBuild/windows-deps.json`, stops when a file's SHA-256 differs from the pin, and builds the SuperBuild with MSVC for AVX2. The `windows-x64` job of `release.yml` runs `configure.py build` on a hosted Windows runner, on a dry run started with `windows=true`.
+The Windows and macOS build files inherited from ODX were removed in 0.1.0. `configure.py` is the Windows build script of AIDM. It downloads the Windows dependencies release pinned in `SuperBuild/windows-deps.json`, stops when a file's SHA-256 differs from the pin, and builds the SuperBuild with MSVC for AVX2. `configure.py build cpu` builds the CPU variant and `configure.py build cuda` the CUDA variant of ADR 0006; `configure.py build` alone builds the CPU variant. The `windows-x64` job of `release.yml` runs `configure.py build` on a hosted Windows runner, on a dry run started with `windows=true`.
 
 ## Workflow
 

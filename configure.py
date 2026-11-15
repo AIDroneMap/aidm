@@ -7,6 +7,16 @@ python/, installs the CMake pinned in SuperBuild/windows-cmake.txt and
 builds the SuperBuild with that CMake and MSVC for AVX2. `clean` removes
 what `build` made.
 
+`build` takes a variant, `cpu` (the default) or `cuda` (ADR 0006). The cpu
+variant builds OpenMVS and OpenSfM without CUDA. The cuda variant builds
+them with the CUDA toolkit that CUDA_PATH names, then copies into the
+install folder the CUDA runtime DLLs the built tools import. After the
+build, both variants list the DLLs of the install folder and read the
+imports of every executable and module the package holds. A cpu build stops
+when it holds or imports any CUDA DLL. A cuda build stops when a tool
+imports a CUDA runtime DLL the install folder lacks, or when no tool
+imports CUDA at all. Neither ships the NVIDIA driver's nvcuda.dll.
+
 The package's Python is the embeddable package of the deps release. Its
 ._pth file is edited to import site and to list Lib\\site-packages, and the
 wheels of requirements.txt are installed there with the Python that runs
@@ -98,6 +108,31 @@ _REQUIREMENT = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[A-Za-z0-9,._-]+\]
                           r"\s*(?:;\s*sys_platform\s*==\s*['\"]([a-z0-9]+)['\"])?$")
 # One source pin: a name, one exact version, then one or more hashes.
 _SOURCE_PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([A-Za-z0-9.+!-]+)(?:\s+--hash=sha256:[0-9a-f]{64})+$")
+
+# The two Windows variants of ADR 0006. A build without a variant is cpu.
+VARIANTS = ("cpu", "cuda")
+DEFAULT_VARIANT = "cpu"
+# Written in the SuperBuild's build folder: a build folder serves one variant.
+VARIANT_MARKER = ".aidm-variant"
+# The CUDA release the cuda variant builds with (docs/specs/0113-windows-engine-0.3.0.md).
+CUDA_RELEASE = "12.9"
+# The MSBuild files of the toolkit itself. CMake's toolset cuda=<folder>
+# reads them there, so the build needs no CUDA integration in Visual Studio.
+CUDA_MSBUILD_EXTENSIONS = os.path.join("extras", "visual_studio_integration", "MSBuildExtensions")
+# The NVIDIA driver's DLL. The machine supplies it; a package that ships
+# one shadows the real driver, as the stub of the inherited build did.
+DRIVER_DLLS = ("nvcuda.dll",)
+# The DLL names of the CUDA driver, the CUDA toolkit's runtime libraries and
+# cuDNN, with their 64 and version suffixes: cudart64_12.dll,
+# cublasLt64_12.dll, nvrtc64_120_0.dll, nppial64_12.dll, nvJitLink_120_0.dll.
+_CUDA_DLL = re.compile(r"^(nvcuda|cudart|cublas|cublaslt|cufft|cufftw|curand|cusolver|cusolvermg|cusparse"
+                       r"|nvrtc|nvrtc-builtins|nvjitlink|nvjpeg|npp[a-z]*|nvblas|cupti|nvtoolsext|cudnn[a-z_]*"
+                       r"|nvfatbin)(?:32|64)?(?:_[0-9.]+)*\.dll$", re.IGNORECASE)
+# The files whose imports the DLL check reads: programs, DLLs and Python modules.
+PE_SUFFIXES = (".exe", ".dll", ".pyd")
+# Data directory entries of a PE file: the import table and the delay-load import table.
+_PE_IMPORT_DIRECTORY = 1
+_PE_DELAY_IMPORT_DIRECTORY = 13
 
 
 class DepsError(Exception):
@@ -365,11 +400,12 @@ def superbuild_environment(env, cmake, python=None, site_packages=None):
     return env
 
 
-def build_superbuild(cmake, pinned, build_dir, env, runner=subprocess.run):
+def build_superbuild(cmake, pinned, build_dir, env, runner=subprocess.run, configure_args=()):
     """Print the CMake the SuperBuild uses, then configure and build it with that CMake.
 
     pinned is the version of the CMake pin. A wheel version may carry a
     fourth number for a rebuild of the same CMake, which cmake does not print.
+    configure_args go to the configure command, after the source folder.
     """
     version = cmake_version(cmake, runner=runner)
     if version != ".".join(pinned.split(".")[:3]):
@@ -382,7 +418,7 @@ def build_superbuild(cmake, pinned, build_dir, env, runner=subprocess.run):
 
     print("Compiling SuperBuild")
     os.makedirs(build_dir, exist_ok=True)
-    for cmd in ([cmake, ".."],
+    for cmd in ([cmake, ".."] + list(configure_args),
                 [cmake, "--build", ".", "--config", "Release", "-j%d" % os.cpu_count()]):
         print("Running %s" % subprocess.list2cmdline(cmd))
         result = runner(cmd, cwd=build_dir, env=env)
@@ -868,7 +904,13 @@ def safe_remove(path):
         os.remove(path)
 
 
-def build():
+def build(variant=DEFAULT_VARIANT):
+    print("Windows variant: %s" % variant)
+    build_dir = os.path.join(ROOT, "SuperBuild", "build")
+    check_build_variant(build_dir, variant)
+    cuda_folder = cuda_toolkit(os.environ) if variant == "cuda" else None
+    configure_args = superbuild_variant_args(variant, cuda_folder)
+
     pin = load_pin()
     assets = fetch_pinned_assets(pin)
     unpack_export(pin, assets["export"])
@@ -882,11 +924,10 @@ def build():
     print("PYTHONPATH=%s" % env["PYTHONPATH"])
     report_toolset(env)
 
-    build_dir = os.path.join(ROOT, "SuperBuild", "build")
-
     def superbuild():
         if superbuild_needed(PYTHON_DIR, build_dir, os.path.join(ROOT, "SuperBuild", "install")):
-            build_superbuild(cmake, load_cmake_pin(), build_dir, env)
+            record_build_variant(build_dir, variant)
+            build_superbuild(cmake, load_cmake_pin(), build_dir, env, configure_args=configure_args)
             superbuild_done(PYTHON_DIR)
 
     def check():
@@ -897,6 +938,13 @@ def build():
         check_data_folders()
 
     build_then_check(superbuild, check)
+
+    # The package holds the install folder and python/. Their imports decide
+    # which CUDA runtime DLLs the cuda variant needs.
+    roots = [SUPERBUILD_INSTALL, PYTHON_DIR]
+    if variant == "cuda":
+        bundle_cuda_runtime(SUPERBUILD_BIN, roots, os.path.join(cuda_folder, "bin"))
+    check_variant_dlls(variant, roots, SUPERBUILD_BIN)
 
 
 def _inside(path, folder):
@@ -994,6 +1042,257 @@ def build_then_check(build_step, check_step):
         raise failure
 
 
+def cuda_toolkit(env, runner=subprocess.run):
+    """Return the CUDA toolkit folder that CUDA_PATH names, or raise DepsError.
+
+    The CUDA installer sets CUDA_PATH. The folder must hold nvcc of
+    CUDA_RELEASE and the toolkit's own MSBuild files, which the toolset
+    cuda=<folder> reads.
+    """
+    by_name = {key.upper(): value for key, value in env.items()}
+    folder = by_name.get("CUDA_PATH", "")
+    if not folder or not os.path.isdir(folder):
+        raise DepsError("The cuda variant needs the CUDA %s toolkit, and CUDA_PATH (%s) names no folder. "
+                        "Install the toolkit, which sets CUDA_PATH, and run configure.py again."
+                        % (CUDA_RELEASE, folder or "not set"))
+    nvcc = os.path.join(folder, "bin", "nvcc.exe")
+    if not os.path.isfile(nvcc):
+        raise DepsError("%s has no nvcc.exe. The cuda variant needs the CUDA compiler of the toolkit." % os.path.dirname(nvcc))
+    extensions = os.path.join(folder, CUDA_MSBUILD_EXTENSIONS)
+    if not os.path.isdir(extensions):
+        raise DepsError("%s does not exist. The cuda variant builds through the toolkit's own MSBuild files: "
+                        "install the toolkit with its Visual Studio integration subpackage." % extensions)
+    result = runner([nvcc, "--version"], capture_output=True, text=True)
+    match = re.search(r"release (\d+\.\d+), (V\S+)", result.stdout or "")
+    if result.returncode != 0 or not match:
+        raise DepsError("%s --version did not print a release" % nvcc)
+    if match.group(1) != CUDA_RELEASE:
+        raise DepsError("%s is CUDA %s. The cuda variant builds with CUDA %s." % (nvcc, match.group(1), CUDA_RELEASE))
+    print("CUDA toolkit: %s, nvcc %s" % (folder, match.group(2)))
+    return folder
+
+
+def superbuild_variant_args(variant, cuda_folder=None):
+    """The arguments of the SuperBuild's configure command for variant.
+
+    The cuda variant also names the toolkit and selects the toolset
+    cuda=<toolkit>, which the external projects of the SuperBuild take on.
+    """
+    if variant not in VARIANTS:
+        raise DepsError("Unknown variant %r: expected %s" % (variant, " or ".join(VARIANTS)))
+    args = ["-DAIDM_WINDOWS_VARIANT=%s" % variant]
+    if variant == "cuda":
+        if not cuda_folder:
+            raise DepsError("The cuda variant needs the folder of the CUDA toolkit")
+        folder = cuda_folder.replace("\\", "/").rstrip("/")
+        args += ["-DAIDM_CUDA_TOOLKIT=%s" % folder, "-T", "cuda=%s" % folder]
+    return args
+
+
+def check_build_variant(build_dir, variant):
+    """Stop when build_dir holds a build of another variant, or of no recorded variant.
+
+    A build folder keeps its toolset and its CUDA settings, so a cpu build
+    and a cuda build never share one.
+    """
+    if not os.path.isdir(build_dir):
+        return
+    marker = os.path.join(build_dir, VARIANT_MARKER)
+    built = ""
+    if os.path.isfile(marker):
+        with open(marker, encoding="utf-8") as f:
+            built = f.read().strip()
+    if built != variant:
+        raise DepsError("%s holds a build of %s, not of the %s variant. Run python configure.py clean first."
+                        % (build_dir, "the %s variant" % built if built else "no recorded variant", variant))
+
+
+def record_build_variant(build_dir, variant):
+    os.makedirs(build_dir, exist_ok=True)
+    with open(os.path.join(build_dir, VARIANT_MARKER), "w", encoding="utf-8") as f:
+        f.write(variant + "\n")
+
+
+def is_cuda_dll(name):
+    """Whether name is the file name of a CUDA driver, CUDA runtime or cuDNN DLL."""
+    return bool(_CUDA_DLL.match(os.path.basename(name)))
+
+
+def _read_at(f, offset, size, path):
+    f.seek(offset)
+    data = f.read(size)
+    if len(data) != size:
+        raise DepsError("%s: truncated PE file, no %d bytes at offset %d" % (path, size, offset))
+    return data
+
+
+def _read_name(f, offset, path):
+    f.seek(offset)
+    data = f.read(512)
+    end = data.find(b"\0")
+    if end <= 0:
+        raise DepsError("%s: no DLL name at offset %d" % (path, offset))
+    return data[:end].decode("ascii", "replace")
+
+
+def pe_imports(path):
+    """Return the names of the DLLs that the PE file path imports, the
+    delay-loaded ones included, in the order of its tables. Return None
+    when path is not a PE file. Raise DepsError on a broken one.
+    """
+    with open(path, "rb") as f:
+        if f.read(2) != b"MZ":
+            return None
+        pe_offset = struct.unpack("<I", _read_at(f, 0x3C, 4, path))[0]
+        if _read_at(f, pe_offset, 4, path) != b"PE\0\0":
+            return None
+        sections_count, optional_size = struct.unpack("<2xH12xH2x", _read_at(f, pe_offset + 4, 20, path))
+        optional_offset = pe_offset + 24
+        optional = _read_at(f, optional_offset, optional_size, path)
+        magic = struct.unpack_from("<H", optional, 0)[0]
+        if magic == 0x20B:
+            image_base = struct.unpack_from("<Q", optional, 24)[0]
+            directories_offset = 112
+        elif magic == 0x10B:
+            image_base = struct.unpack_from("<I", optional, 28)[0]
+            directories_offset = 96
+        else:
+            raise DepsError("%s: unknown PE optional header magic 0x%x" % (path, magic))
+        directories_count = struct.unpack_from("<I", optional, directories_offset - 4)[0]
+
+        def directory(index):
+            if index >= directories_count or directories_offset + 8 * index + 8 > len(optional):
+                return 0, 0
+            return struct.unpack_from("<II", optional, directories_offset + 8 * index)
+
+        sections = []
+        table = optional_offset + optional_size
+        for i in range(sections_count):
+            virtual_size, virtual_address, raw_size, raw_offset = struct.unpack(
+                "<8xIIII16x", _read_at(f, table + 40 * i, 40, path))
+            sections.append((virtual_address, max(virtual_size, raw_size), raw_offset))
+
+        def offset_of(rva):
+            for virtual_address, size, raw_offset in sections:
+                if virtual_address <= rva < virtual_address + size:
+                    return rva - virtual_address + raw_offset
+            raise DepsError("%s: address 0x%x is in no section" % (path, rva))
+
+        names = []
+        rva, _size = directory(_PE_IMPORT_DIRECTORY)
+        if rva:
+            position = offset_of(rva)
+            while True:
+                descriptor = struct.unpack("<5I", _read_at(f, position, 20, path))
+                if not any(descriptor):
+                    break
+                names.append(_read_name(f, offset_of(descriptor[3]), path))
+                position += 20
+        rva, _size = directory(_PE_DELAY_IMPORT_DIRECTORY)
+        if rva:
+            position = offset_of(rva)
+            while True:
+                descriptor = struct.unpack("<8I", _read_at(f, position, 32, path))
+                if not any(descriptor):
+                    break
+                attributes, name_address = descriptor[0], descriptor[1]
+                # Bit 0 set: the name is an address relative to the image. Clear: an absolute one.
+                names.append(_read_name(f, offset_of(name_address if attributes & 1 else name_address - image_base),
+                                        path))
+                position += 32
+        return names
+
+
+def pe_files(roots):
+    """Every program, DLL and Python module below roots, in a fixed order."""
+    found = []
+    for root in roots:
+        for folder, _dirs, files in os.walk(root):
+            found += [os.path.join(folder, name) for name in files if name.lower().endswith(PE_SUFFIXES)]
+    return sorted(found)
+
+
+def read_imports(roots):
+    """Map each PE file below roots to the DLLs it imports."""
+    imports = {}
+    for path in pe_files(roots):
+        names = pe_imports(path)
+        if names is not None:
+            imports[path] = names
+    return imports
+
+
+def bundle_cuda_runtime(install_bin, roots, cuda_bin):
+    """Copy into install_bin each DLL of the CUDA toolkit's bin folder that a
+    PE file below roots imports, and those the copies import in turn.
+    Return the names copied.
+    """
+    toolkit = {name.lower(): name for name in os.listdir(cuda_bin) if name.lower().endswith(".dll")}
+    copied = []
+    while True:
+        present = {name.lower() for name in os.listdir(install_bin)}
+        wanted = sorted({name.lower() for names in read_imports(roots).values() for name in names
+                         if name.lower() in toolkit and name.lower() not in present})
+        if not wanted:
+            break
+        for name in wanted:
+            source = os.path.join(cuda_bin, toolkit[name])
+            print("Copying %s to %s" % (source, install_bin))
+            shutil.copyfile(source, os.path.join(install_bin, toolkit[name]))
+            copied.append(toolkit[name])
+    return copied
+
+
+def check_variant_dlls(variant, roots, install_bin):
+    """List the DLLs of install_bin, read the imports of every PE file below
+    roots, and raise DepsError when the tree does not fit variant.
+
+    Both variants: no file is the NVIDIA driver's DLL. cpu: no file is a
+    CUDA DLL and no file imports one. cuda: every CUDA DLL a file imports,
+    other than the driver's, is in install_bin, and at least one file
+    imports CUDA, so the tools were really built with it.
+    """
+    if variant not in VARIANTS:
+        raise DepsError("Unknown variant %r: expected %s" % (variant, " or ".join(VARIANTS)))
+    present = {name.lower() for name in os.listdir(install_bin)} if os.path.isdir(install_bin) else set()
+    print("DLLs in %s:" % install_bin)
+    for name in sorted(present):
+        if name.endswith(".dll"):
+            print("  %s%s" % (name, " (CUDA)" if is_cuda_dll(name) else ""))
+
+    failures = []
+    driver = {name.lower() for name in DRIVER_DLLS}
+    for path in pe_files(roots):
+        name = os.path.basename(path).lower()
+        if name in driver:
+            failures.append("%s is the NVIDIA driver's DLL, which the machine supplies; no package ships it" % path)
+        elif variant == "cpu" and is_cuda_dll(name):
+            failures.append("%s is a CUDA DLL in the cpu variant" % path)
+
+    importers = 0
+    for path, names in sorted(read_imports(roots).items()):
+        cuda = sorted({name for name in names if is_cuda_dll(name)}, key=str.lower)
+        if not cuda:
+            continue
+        importers += 1
+        print("%s imports %s" % (path, ", ".join(cuda)))
+        for name in cuda:
+            if variant == "cpu":
+                failures.append("%s imports %s in the cpu variant" % (path, name))
+            elif name.lower() not in driver and name.lower() not in present:
+                failures.append("%s imports %s, which is not in %s" % (path, name, install_bin))
+    if variant == "cuda" and not importers:
+        failures.append("no file below %s imports a CUDA DLL: the cuda variant was built without CUDA"
+                        % ", ".join(roots))
+
+    for failure in failures:
+        print("Error: %s" % failure)
+    if failures:
+        raise DepsError("the %s variant failed its DLL check, %d failure%s"
+                        % (variant, len(failures), "" if len(failures) == 1 else "s"))
+    print("The %s variant passed its DLL check. Files that import CUDA: %d" % (variant, importers))
+
+
 def clean():
     safe_remove(EXPORT_DIR)
     safe_remove(EXPORT_DIR + ".unpack")
@@ -1004,11 +1303,17 @@ def clean():
     safe_remove(os.path.join(ROOT, "SuperBuild", "install"))
 
 
-def main(argv=None):
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="AIDM Windows build script")
     parser.add_argument("action", type=str, choices=["build", "clean"],
                         help="Action: %(choices)s")
-    args = parser.parse_args(argv)
+    parser.add_argument("variant", type=str, nargs="?", choices=VARIANTS, default=DEFAULT_VARIANT,
+                        help="Variant that build makes: %(choices)s. Default: %(default)s")
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
     # Keep this script's lines in order with the output of the commands it
     # runs when both go to one log file.
     sys.stdout.reconfigure(line_buffering=True)
@@ -1023,7 +1328,7 @@ def main(argv=None):
 
     try:
         if args.action == "build":
-            build()
+            build(args.variant)
         else:
             clean()
     except DepsError as e:
