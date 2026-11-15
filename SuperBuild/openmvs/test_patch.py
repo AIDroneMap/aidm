@@ -11,6 +11,7 @@ import unittest
 PATCH = Path(__file__).resolve().parents[1] / "cmake/OpenMVSWeightedPatch.cmake"
 RECIPE = Path(__file__).resolve().parents[1] / "cmake/External-OpenMVS.cmake"
 WIDTH_PATCH = Path(__file__).resolve().parents[2] / "docker/patch_openmvs.py"
+EQUIVALENCE_TEST = Path(__file__).resolve().parent / "WeightedPatchTest.cpp"
 
 
 @unittest.skipUnless(PATCH.exists() and shutil.which("cmake"),
@@ -85,6 +86,60 @@ class TestOpenMVSPatchStep(unittest.TestCase):
         self.assertNotEqual(weighted, -1, "weighted patch kernel is missing")
         self.assertTrue(width < chained < weighted,
                         "the weighted patch must be a second COMMAND of the patch step")
+
+
+GCC = shutil.which("g++") or shutil.which("c++")
+MSVC = shutil.which("cl")
+
+
+@unittest.skipUnless(EQUIVALENCE_TEST.exists() and (GCC or MSVC),
+                     "the equivalence test source and a C++ preprocessor are needed")
+class TestScalarReferenceDeclaration(unittest.TestCase):
+    """The scalar reference of WeightedPatchTest.cpp is declared for the compiler at hand.
+
+    Only the preprocessor runs. The includes are dropped, so the standard
+    library of the host does not matter. GCC gets the MSVC branch by defining
+    _MSC_VER; on a machine with cl the real preprocessor is used.
+    """
+
+    def preprocess(self, msvc):
+        lines = [line for line in EQUIVALENCE_TEST.read_text().splitlines()
+                 if not line.startswith("#include")]
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "reference.cpp"
+            source.write_text("\n".join(lines) + "\n")
+            if MSVC and msvc:
+                command = [MSVC, "/nologo", "/EP", str(source)]
+            elif GCC:
+                command = [GCC, "-E", "-P", "-x", "c++"]
+                command += ["-D_MSC_VER=1951"] if msvc else []
+                command += [str(source)]
+            else:
+                self.skipTest("the GCC branch needs g++")
+            result = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return "".join(result.stdout.split())
+
+    def test_msvc_gets_declspec_and_no_optimizer_around_the_reference(self):
+        text = self.preprocess(msvc=True)
+        self.assertNotIn("__attribute__", text, "MSVC has no __attribute__")
+        declaration = text.find("__declspec(noinline)boolscalarPatch(")
+        self.assertNotEqual(declaration, -1, "the reference is not declared noinline")
+        off = text.find('#pragmaoptimize("",off)')
+        on = text.find('#pragmaoptimize("",on)')
+        self.assertTrue(-1 < off < declaration < on,
+                        "the optimizer must be off from before the reference to after it")
+        self.assertLess(on, text.find("voidcheck("), "the optimizer must be back on after it")
+        self.assertEqual(text.count("#pragmaoptimize"), 2)
+
+    def test_gcc_keeps_its_attributes_and_no_msvc_text(self):
+        if MSVC and not GCC:
+            self.skipTest("the GCC branch needs g++")
+        text = self.preprocess(msvc=False)
+        self.assertIn('__attribute__((noinline,optimize("no-tree-vectorize")))boolscalarPatch(',
+                      text)
+        self.assertNotIn("__declspec", text)
+        self.assertNotIn("#pragma", text)
 
 
 @unittest.skipUnless(RECIPE.exists() and WIDTH_PATCH.exists() and shutil.which("git"),

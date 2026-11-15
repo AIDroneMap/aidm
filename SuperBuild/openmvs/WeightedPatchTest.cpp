@@ -21,7 +21,19 @@ using Step = std::array<float, 9>;
 using Weights = std::array<PixelWeight, 25>;
 using Sums = std::array<float, 3>;
 
-__attribute__((noinline, optimize("no-tree-vectorize")))
+// The scalar reference must stay a plain scalar function that the compiler
+// neither inlines nor vectorises, or the test would compare the patched code
+// with a copy of itself. GCC has attributes for both. MSVC has neither, so it
+// gets a noinline declaration and the optimizer switched off around the
+// function, which also rules out loop and SLP vectorisation.
+#if defined(_MSC_VER)
+#define AIDM_SCALAR_REFERENCE __declspec(noinline)
+#pragma optimize("", off)
+#else
+#define AIDM_SCALAR_REFERENCE __attribute__((noinline, optimize("no-tree-vectorize")))
+#endif
+
+AIDM_SCALAR_REFERENCE
 bool scalarPatch(const float* image, std::size_t stride, int width, int height,
                  const Origin& origin, const Step& step, const Weights& weights, Sums& sums)
 {
@@ -60,6 +72,10 @@ bool scalarPatch(const float* image, std::size_t stride, int width, int height,
     }
     return true;
 }
+
+#if defined(_MSC_VER)
+#pragma optimize("", on)
+#endif
 
 void check(bool condition, const char* message)
 {
