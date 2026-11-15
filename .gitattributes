@@ -1,0 +1,2 @@
+# cmd.exe reads batch files with CRLF line endings, on every checkout.
+*.bat text eol=crlf

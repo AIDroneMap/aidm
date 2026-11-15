@@ -4,8 +4,11 @@
 SuperBuild/windows-deps.json, checks the SHA-256 of every file against the
 pin, unpacks the deps export into vcpkg/, lays out the package's Python in
 python/, installs the CMake pinned in SuperBuild/windows-cmake.txt and
-builds the SuperBuild with that CMake and MSVC for AVX2. `clean` removes
-what `build` made.
+builds the SuperBuild with that CMake and MSVC for AVX2. `package cpu`, the
+default, or `package cuda` lays out the built tree as the engine folder of a
+native package (ADR 0007), checks it through win32env.bat and run.bat, and
+writes dist/aidm-<version>-windows-x64[-cuda].tar.gz with a .sha256 file.
+`clean` removes what `build` and `package` made.
 
 `build` takes a variant, `cpu` (the default) or `cuda` (ADR 0006). The cpu
 variant builds OpenMVS and OpenSfM without CUDA. The cuda variant builds
@@ -24,8 +27,9 @@ this script, of the same version and architecture. No virtual environment.
 The GDAL Python bindings are the wheel of the deps release, installed there
 from its checked download. GDAL itself, PROJ and their DLLs are the export's.
 
-The functions that read the pin and check the downloads run on any platform,
-so the unit tests in tests/test_configure.py import this file on Linux.
+The functions that read the pin, check the downloads and lay out the package
+run on any platform, so the unit tests in tests/test_configure.py and
+tests/test_package_layout.py import this file on Linux.
 """
 
 import argparse
@@ -1293,6 +1297,464 @@ def check_variant_dlls(variant, roots, install_bin):
     print("The %s variant passed its DLL check. Files that import CUDA: %d" % (variant, importers))
 
 
+# The package step. `package` lays out one top folder for a variant, with
+# the engine under engine/ (ADR 0007), checks it, and writes it as a
+# tar.gz with a .sha256 file next to it. The layout is a function of a
+# built tree and a variant, so the unit tests run it on Linux against a
+# fake tree.
+
+DIST_DIR = os.path.join(ROOT, "dist")
+
+# The variant ids of ADR 0006, by the name configure.py takes.
+VARIANT_IDS = dict(zip(VARIANTS, ("windows-x64", "windows-x64-cuda")))
+
+# The files and the Python folders of the engine that the package holds.
+ENGINE_FILES = ("run.bat", "win32env.bat", "run.py", "VERSION", "ENGINE", "settings.yaml")
+ENGINE_FOLDERS = ("modules", "stages")
+
+# The SuperBuild keeps each tool's sources in SuperBuild/src/<tool>, the
+# source of its licence files, except OpenSfM, whose sources are in its
+# install folder.
+SOURCES_IN_INSTALL = {"opensfm": os.path.join("bin", "opensfm")}
+_LICENCE_FILE = re.compile(r"^(licen[cs]e|copying|copyright|notice)([._-].*)?$", re.IGNORECASE)
+
+# The ._pth line that puts the engine folder on sys.path. The package's
+# Python ignores PYTHONPATH and leaves the script's folder off sys.path, so
+# without it run.py cannot import modules/ or stages/. Relative to the
+# folder of the ._pth file, python/.
+PTH_ENGINE_FOLDER = ".."
+
+# The Visual C++ runtime folders of a Visual Studio redistributable folder
+# that the package takes DLLs from: the C++ runtime and OpenMP.
+_VC_RUNTIME_FOLDER = re.compile(r"^Microsoft\.VC\d+\.(CRT|OpenMP)$", re.IGNORECASE)
+
+def package_name(version, variant):
+    """The name of the top folder of the package, without extension."""
+    if variant not in VARIANT_IDS:
+        raise DepsError("unknown variant %r: expected %s" % (variant, " or ".join(VARIANT_IDS)))
+    return "aidm-%s-%s" % (version, VARIANT_IDS[variant])
+
+
+def archive_name(version, variant):
+    return package_name(version, variant) + ".tar.gz"
+
+
+def read_version(root=ROOT):
+    path = os.path.join(root, "VERSION")
+    try:
+        with open(path, encoding="utf-8") as f:
+            version = f.read().strip()
+    except OSError as e:
+        raise DepsError("%s: cannot read the version: %s" % (path, e))
+    if not re.match(r"^\d+\.\d+\.\d+([.+-][0-9A-Za-z.+-]+)?$", version):
+        raise DepsError("%s: %r is not a version" % (path, version))
+    return version
+
+
+def vc_runtime_dlls(redist_dir):
+    """Return name -> path of the x64 C++ runtime and OpenMP DLLs in a Visual
+    Studio redistributable folder, the folder VCToolsRedistDir names."""
+    x64 = os.path.join(redist_dir, "x64")
+    if not os.path.isdir(x64):
+        raise DepsError("%s has no x64 folder: VCToolsRedistDir must name the redistributable folder "
+                        "of the Visual Studio that built the SuperBuild" % redist_dir)
+    found = {}
+    for folder in sorted(os.listdir(x64)):
+        if not _VC_RUNTIME_FOLDER.match(folder):
+            continue
+        for name in sorted(os.listdir(os.path.join(x64, folder))):
+            if name.lower().endswith(".dll"):
+                found[name.lower()] = os.path.join(x64, folder, name)
+    if not found:
+        raise DepsError("%s has no Visual C++ runtime DLLs in x64\\Microsoft.VC*.CRT" % redist_dir)
+    return found
+
+
+def needed_runtime(imports, runtime):
+    """Return the sorted names of runtime that the files import, and the
+    runtime DLLs those import in turn.
+
+    imports maps each file to the DLL names it imports, runtime maps a
+    runtime DLL's name to its path."""
+    needed = set()
+    pending = [name.lower() for names in imports.values() for name in names if name.lower() in runtime]
+    while pending:
+        name = pending.pop()
+        if name in needed:
+            continue
+        needed.add(name)
+        pending.extend(n.lower() for n in (pe_imports(runtime[name]) or []) if n.lower() in runtime)
+    return sorted(needed)
+
+
+def add_engine_folder(text):
+    """Return the text of a ._pth file that also lists the engine folder,
+    after its other paths. A file that lists it already is returned unchanged."""
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.splitlines()
+    stripped = [line.strip() for line in lines]
+    if PTH_ENGINE_FOLDER in stripped:
+        return text
+    paths = [i for i, line in enumerate(stripped)
+             if line and not line.startswith("#") and not line.startswith("import ")]
+    lines.insert(paths[-1] + 1 if paths else 0, PTH_ENGINE_FOLDER)
+    return newline.join(lines) + newline
+
+
+# Written into the site-packages of the package's Python. Python imports
+# sitecustomize at the start of every process, after site has read the
+# ._pth file, so this runs in run.py and in every Python the engine starts.
+PACKAGE_SITECUSTOMIZE = r'''"""Sets up every Python process of the AIDM engine package on Windows.
+
+Written by configure.py package. The ._pth file of this Python runs it in
+isolated mode: it ignores the PYTHON environment variables, and since
+Python 3.8 no Python loads the DLLs of an extension module from PATH. So
+this module adds the SuperBuild's bin folder to the folders DLLs load from,
+for pdal, cv2, osgeo and OpenSfM in any process and any import order, and
+applies the bytecode cache folder that win32env.bat sets in
+PYTHONPYCACHEPREFIX.
+"""
+
+import os
+import sys
+
+
+def setup(prefix, platform, environ, add_dll_directory, sys_module):
+    """Return the handles of the DLL folders added for the Python in prefix."""
+    if platform != "win32":
+        return []
+    added = []
+    engine = os.path.dirname(os.path.abspath(prefix))
+    bin_dir = os.path.join(engine, "SuperBuild", "install", "bin")
+    if os.path.isdir(bin_dir):
+        added.append(add_dll_directory(bin_dir))
+    cache = environ.get("PYTHONPYCACHEPREFIX")
+    if cache and not getattr(sys_module, "pycache_prefix", None):
+        sys_module.pycache_prefix = cache
+    return added
+
+
+# Kept so the folders stay added for the life of the process.
+DLL_DIRECTORIES = setup(sys.prefix, sys.platform, os.environ, getattr(os, "add_dll_directory", None), sys)
+'''
+
+
+def _copy_tree(source, target):
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+
+
+def licence_files(folder):
+    """The licence files at the top of a source folder, sorted."""
+    if not os.path.isdir(folder):
+        return []
+    return sorted(name for name in os.listdir(folder)
+                  if _LICENCE_FILE.match(name) and os.path.isfile(os.path.join(folder, name)))
+
+
+def lay_out_licenses(root, engine_dir, deps_licenses, runtime):
+    """Fill engine/licenses and write its index, README.md; return the
+    SuperBuild sources that have no licence file at their top."""
+    target = os.path.join(engine_dir, "licenses")
+    os.makedirs(target)
+    index = ["# Licences of the AIDM engine package", "",
+             "- `LICENSE`: the licence of AIDM, the GNU Affero General Public License version 3."]
+    shutil.copyfile(os.path.join(root, "LICENSE"), os.path.join(target, "LICENSE"))
+    own = os.path.join(root, "licenses")
+    for name in sorted(os.listdir(own)) if os.path.isdir(own) else []:
+        shutil.copyfile(os.path.join(own, name), os.path.join(target, name))
+        index.append("- `%s`: from the licenses folder of AIDM." % name)
+    shutil.copyfile(deps_licenses, os.path.join(target, "aidm-windows-deps-LICENSES.md"))
+    index.append("- `aidm-windows-deps-LICENSES.md`: the licence list of the Windows dependencies release: "
+                 "the deps export, the GDAL wheel, the Python embeddable package and ExifTool.")
+    if runtime:
+        index.append("- The Visual C++ runtime files %s, in `python` and in the folders of the tools that "
+                     "import them, are Microsoft's, from the redistributable folder of the Visual Studio "
+                     "that built the package. They are distributed under the Distributable Code terms of "
+                     "the Microsoft Software License Terms for Visual Studio." % ", ".join(runtime))
+
+    sources = {}
+    source_dir = os.path.join(root, "SuperBuild", "src")
+    if os.path.isdir(source_dir):
+        for name in sorted(os.listdir(source_dir)):
+            if os.path.isdir(os.path.join(source_dir, name)):
+                sources[name] = os.path.join(source_dir, name)
+    for name, folder in SOURCES_IN_INSTALL.items():
+        sources[name] = os.path.join(root, "SuperBuild", "install", folder)
+    missing = []
+    for name in sorted(sources):
+        files = licence_files(sources[name])
+        if not files:
+            missing.append(name)
+            continue
+        os.makedirs(os.path.join(target, "superbuild", name))
+        for file in files:
+            shutil.copyfile(os.path.join(sources[name], file), os.path.join(target, "superbuild", name, file))
+        index.append("- `superbuild/%s/`: %s, from the sources of %s." % (name, ", ".join(files), name))
+    if missing:
+        index.append("- No licence file at the top of the sources of %s." % ", ".join(missing))
+    with open(os.path.join(target, "README.md"), "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(index) + "\n")
+    return missing
+
+
+def lay_out_package(root, dest, variant, redist_dir, deps_licenses, build_info=()):
+    """Lay out the package of variant from the built tree root into dest.
+
+    root holds the engine files, the SuperBuild's install folder and the
+    package's Python, as configure.py build leaves them. Returns the top
+    folder, dest/aidm-<version>-windows-x64[-cuda], with engine/ in it.
+    build_info is a list of (name, value) lines for engine/BUILD-INFO.txt.
+    """
+    version = read_version(root)
+    top = os.path.join(dest, package_name(version, variant))
+    engine = os.path.join(top, "engine")
+    install = os.path.join(root, "SuperBuild", "install")
+    python = os.path.join(root, "python")
+    for required in [os.path.join(root, name) for name in ENGINE_FILES + ENGINE_FOLDERS] + \
+            [os.path.join(install, "bin"), os.path.join(python, "python.exe"), os.path.join(python, SITE_PACKAGES)]:
+        if not os.path.exists(required):
+            raise DepsError("%s does not exist: run configure.py build first" % required)
+
+    safe_remove(top)
+    os.makedirs(engine)
+    print("Laying out %s" % top)
+    for name in ENGINE_FILES:
+        shutil.copyfile(os.path.join(root, name), os.path.join(engine, name))
+    for name in ENGINE_FOLDERS:
+        _copy_tree(os.path.join(root, name), os.path.join(engine, name))
+    _copy_tree(install, os.path.join(engine, "SuperBuild", "install"))
+    _copy_tree(python, os.path.join(engine, "python"))
+    package_python = os.path.join(engine, "python")
+    for marker in (PYTHON_MARKER, PYTHON_REINSTALL_MARKER):
+        safe_remove(os.path.join(package_python, marker))
+
+    pth = edit_pth_file(package_python)
+    with open(pth, encoding="utf-8", newline="") as f:
+        text = f.read()
+    with open(pth, "w", encoding="utf-8", newline="") as f:
+        f.write(add_engine_folder(text))
+    print("Listed the engine folder in %s" % pth)
+
+    sitecustomize = os.path.join(package_python, SITE_PACKAGES, "sitecustomize.py")
+    if os.path.exists(sitecustomize):
+        raise DepsError("%s exists already: a wheel ships one, and the package needs its own" % sitecustomize)
+    with open(sitecustomize, "w", encoding="utf-8", newline="\n") as f:
+        f.write(PACKAGE_SITECUSTOMIZE)
+
+    imports = read_imports([engine])
+    runtime = vc_runtime_dlls(redist_dir)
+    needed = needed_runtime(imports, runtime)
+    # Next to python.exe, in the SuperBuild's bin and next to every program
+    # that imports one: Windows looks in a program's own folder first, so
+    # these copies win over any other on the machine.
+    folders = {package_python, os.path.join(engine, "SuperBuild", "install", "bin")}
+    for path, names in imports.items():
+        if path.lower().endswith(".exe") and any(name.lower() in needed for name in names):
+            folders.add(os.path.dirname(path))
+    for folder in sorted(folders):
+        for name in needed:
+            shutil.copyfile(runtime[name], os.path.join(folder, os.path.basename(runtime[name])))
+    print("Copied the Visual C++ runtime %s into %s" % (", ".join(needed), ", ".join(sorted(folders))))
+
+    # The same DLL check as configure.py build runs on the built tree, now on
+    # the layout with the runtime DLLs in it.
+    check_variant_dlls(variant, [engine], os.path.join(engine, "SuperBuild", "install", "bin"))
+    driver = {name.lower() for name in DRIVER_DLLS}
+    cuda = sorted({name.lower() for names in imports.values() for name in names
+                   if is_cuda_dll(name) and name.lower() not in driver})
+    missing = lay_out_licenses(root, engine, deps_licenses, needed)
+    if missing:
+        print("No licence file at the top of the sources of %s" % ", ".join(missing))
+
+    lines = [("variant", VARIANT_IDS[variant]), ("version", version)] + list(build_info)
+    lines += [("visual c++ runtime", "%s sha256 %s" % (name, sha256_of(runtime[name]))) for name in needed]
+    lines += [("cuda runtime imported", name) for name in cuda]
+    with open(os.path.join(engine, "BUILD-INFO.txt"), "w", encoding="utf-8", newline="\n") as f:
+        f.write("".join("%s: %s\n" % line for line in lines))
+
+    files = [os.path.relpath(os.path.join(parent, name), dest)
+             for parent, _dirs, names in os.walk(top) for name in names]
+    longest = max(files, key=len)
+    print("The package holds %d files; its longest path, %d characters, is %s" % (len(files), len(longest), longest))
+    return top
+
+
+def toolset_info(env):
+    """The Visual Studio lines of BUILD-INFO.txt, from the developer shell."""
+    by_name = {key.upper(): value for key, value in env.items()}
+    lines = []
+    for name in ("VSCMD_VER", "VisualStudioVersion", "VCToolsVersion", "VCToolsRedistDir"):
+        lines.append((name, by_name.get(name.upper(), "(not set)")))
+    return lines
+
+
+def tar_command(tar, archive, dest, top_name):
+    return [tar, "-czf", archive, "-C", dest, top_name]
+
+
+def write_archive(top, tar, runner=subprocess.run):
+    """Write top as a tar.gz next to it with tar, and a .sha256 file next to
+    that in the format of sha256sum; return the archive's path."""
+    dest, name = os.path.split(top)
+    archive = os.path.join(dest, name + ".tar.gz")
+    safe_remove(archive)
+    cmd = tar_command(tar, archive, dest, name)
+    print("Running %s" % subprocess.list2cmdline(cmd))
+    result = runner(cmd)
+    if result.returncode != 0 or not os.path.isfile(archive):
+        raise DepsError("%s returned %s" % (subprocess.list2cmdline(cmd), result.returncode))
+    digest = sha256_of(archive)
+    with open(archive + ".sha256", "w", encoding="utf-8", newline="\n") as f:
+        f.write("%s  %s\n" % (digest, os.path.basename(archive)))
+    print("Wrote %s, SHA-256 %s" % (archive, digest))
+    return archive
+
+
+# Runs in the laid-out package through win32env.bat, as the task API runs
+# the engine. Its one argument is a JSON file: the engine folder and the
+# Windows folder. Exits 1 with an Error line for each failure.
+PACKAGE_CHECK = r"""
+import importlib
+import json
+import os
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    args = json.load(f)
+engine = args["engine"]
+windows = args["windows"]
+failures = []
+
+
+def norm(path):
+    return os.path.normcase(os.path.realpath(path))
+
+
+def inside(path, folder):
+    path, folder = norm(path), norm(folder)
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+print("Python at %s" % sys.executable)
+if norm(sys.executable) != norm(os.path.join(engine, "python", "python.exe")):
+    failures.append("python on PATH is %s, not the package's" % sys.executable)
+
+entries = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry]
+print("PATH=%s" % os.pathsep.join(entries))
+for entry in entries:
+    if not inside(entry, engine) and not inside(entry, windows):
+        failures.append("PATH holds %s, outside the package and Windows" % entry)
+
+install = os.path.join(engine, "SuperBuild", "install")
+for name, value in (("GDAL_DATA", os.path.join(install, "share", "gdal")),
+                    ("PROJ_LIB", os.path.join(install, "share", "proj")),
+                    ("PDAL_DRIVER_PATH", os.path.join(install, "bin"))):
+    if norm(os.environ.get(name, "")) != norm(value) or not os.path.isdir(value):
+        failures.append("%s is %r, not the folder %s" % (name, os.environ.get(name), value))
+if os.environ.get("USE_PATH_FOR_GDAL_PYTHON") != "YES":
+    failures.append("USE_PATH_FOR_GDAL_PYTHON is not YES")
+local = os.environ.get("LOCALAPPDATA", "")
+print("Bytecode cache in %s" % sys.pycache_prefix)
+if not local or norm(sys.pycache_prefix or "") != norm(os.path.join(local, "AIDM", "pycache")):
+    failures.append("the bytecode cache is %r, not AIDM\\pycache in %r" % (sys.pycache_prefix, local))
+
+# pdal first: it must load without osgeo having added PATH to the DLL folders.
+for module in ("pdal", "osgeo.gdal", "cv2", "numpy", "modules.context", "opensfm.multiview"):
+    try:
+        importlib.import_module(module)
+        print("Imported %s" % module)
+    except Exception as e:
+        failures.append("import %s failed: %s: %s" % (module, type(e).__name__, e))
+
+# Python processes the engine starts, through the engine's own runner.
+try:
+    from modules import context, system
+    for cmd in ('"%s" -c "import pdal"' % sys.executable,
+                '"%s" --help' % os.path.join(context.opensfm_path, "bin", "opensfm")):
+        try:
+            system.run(cmd, quiet=True)
+            print("Ran %s" % cmd)
+        except Exception as e:
+            failures.append("%s failed: %s" % (cmd, e))
+except Exception as e:
+    failures.append("cannot load the engine's runner: %s: %s" % (type(e).__name__, e))
+
+# Every DLL the process loaded whose name the package ships must come from the package.
+import ctypes
+from ctypes import wintypes
+shipped = {}
+for folder in (os.path.join(engine, "python"), os.path.join(install, "bin")):
+    for name in os.listdir(folder):
+        if name.lower().endswith(".dll"):
+            shipped[name.lower()] = folder
+psapi = ctypes.WinDLL("psapi", use_last_error=True)
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+kernel32.GetModuleFileNameW.argtypes = [wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
+psapi.EnumProcessModules.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.HMODULE), wintypes.DWORD,
+                                     ctypes.POINTER(wintypes.DWORD)]
+handles = (wintypes.HMODULE * 4096)()
+needed = wintypes.DWORD()
+psapi.EnumProcessModules(kernel32.GetCurrentProcess(), handles, ctypes.sizeof(handles), ctypes.byref(needed))
+loaded = []
+for handle in handles[:needed.value // ctypes.sizeof(wintypes.HMODULE)]:
+    buffer = ctypes.create_unicode_buffer(32768)
+    if kernel32.GetModuleFileNameW(handle, buffer, len(buffer)):
+        loaded.append(buffer.value)
+outside = [path for path in loaded
+           if os.path.basename(path).lower() in shipped and not inside(path, engine)]
+print("The process loaded %d DLLs, %d of them from the package"
+      % (len(loaded), sum(1 for path in loaded if inside(path, engine))))
+for path in outside:
+    failures.append("loaded %s from outside the package, which ships its own" % path)
+
+for failure in failures:
+    print("Error: %s" % failure)
+sys.exit(1 if failures else 0)
+"""
+
+
+def check_package(top, env, runner=subprocess.run):
+    """Run PACKAGE_CHECK and run.bat --help in the package, each through
+    cmd.exe as the task API starts them, with the environment env."""
+    engine = os.path.join(top, "engine")
+    windows = windows_folders(env)[1]
+    with tempfile.TemporaryDirectory(prefix="aidm-package-check-") as folder:
+        script = os.path.join(folder, "check.py")
+        with open(script, "w", encoding="utf-8") as f:
+            f.write(PACKAGE_CHECK)
+        arguments = os.path.join(folder, "check.json")
+        with open(arguments, "w", encoding="utf-8") as f:
+            json.dump({"engine": engine, "windows": windows}, f)
+        for cmd in (["cmd.exe", "/d", "/c", "call", os.path.join(engine, "win32env.bat"),
+                     "&&", "python", script, arguments],
+                    ["cmd.exe", "/d", "/c", "call", os.path.join(engine, "run.bat"), "--help"]):
+            print("Running %s" % subprocess.list2cmdline(cmd))
+            result = runner(cmd, env=env, cwd=folder)
+            if result.returncode != 0:
+                raise DepsError("the package check %s returned %s" % (subprocess.list2cmdline(cmd), result.returncode))
+    left = [parent for parent, dirs, _files in os.walk(engine) if "__pycache__" in dirs]
+    if left:
+        raise DepsError("the package check wrote bytecode into the package: %s" % ", ".join(sorted(left)))
+
+
+def package(variant):
+    print("Windows variant: %s" % variant)
+    check_build_variant(os.path.join(ROOT, "SuperBuild", "build"), variant)
+    pin = load_pin()
+    assets = fetch_pinned_assets(pin)
+    redist_dir = {key.upper(): value for key, value in os.environ.items()}.get("VCTOOLSREDISTDIR")
+    if not redist_dir:
+        raise DepsError("VCToolsRedistDir is not set: run configure.py package from the Visual Studio "
+                        "developer shell that ran configure.py build")
+    commit = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True, text=True)
+    info = [("commit", commit.stdout.strip() if commit.returncode == 0 else "(unknown)"),
+            ("deps release", pin["tag"])] + toolset_info(os.environ)
+    top = lay_out_package(ROOT, DIST_DIR, variant, redist_dir, assets["licenses"], info)
+    check_package(top, dict(os.environ))
+    write_archive(top, os.path.join(windows_folders(os.environ)[0], "tar.exe"))
+
+
 def clean():
     safe_remove(EXPORT_DIR)
     safe_remove(EXPORT_DIR + ".unpack")
@@ -1301,14 +1763,16 @@ def clean():
     safe_remove(os.path.join(ROOT, "SuperBuild", "download"))
     safe_remove(os.path.join(ROOT, "SuperBuild", "src"))
     safe_remove(os.path.join(ROOT, "SuperBuild", "install"))
+    safe_remove(DIST_DIR)
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="AIDM Windows build script")
-    parser.add_argument("action", type=str, choices=["build", "clean"],
+    parser.add_argument("action", type=str, choices=["build", "package", "clean"],
                         help="Action: %(choices)s")
     parser.add_argument("variant", type=str, nargs="?", choices=VARIANTS, default=DEFAULT_VARIANT,
-                        help="Variant that build makes: %(choices)s. Default: %(default)s")
+                        help="Variant that build makes or package lays out: %(choices)s. "
+                             "Default: %(default)s")
     return parser.parse_args(argv)
 
 
@@ -1329,6 +1793,8 @@ def main(argv=None):
     try:
         if args.action == "build":
             build(args.variant)
+        elif args.action == "package":
+            package(args.variant)
         else:
             clean()
     except DepsError as e:
