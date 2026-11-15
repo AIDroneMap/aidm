@@ -132,8 +132,19 @@ if (WIN32)
   set(VCPKG_ROOT "${AIDM_VCPKG_ROOT}")
   set(WIN32_CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
                        -DVCPKG_TARGET_TRIPLET=${AIDM_VCPKG_TRIPLET})
-  set(PYTHON_HOME "${SB_ROOT_DIR}/../venv")
-  set(PYTHON_EXE_PATH "${PYTHON_HOME}/Scripts/python")
+  # The package's Python: configure.py unpacks the embeddable package of the
+  # deps release into python/ and installs the wheels of requirements.txt
+  # into its Lib/site-packages. That package has no headers and no import
+  # library, so tools compile against the Python that runs configure.py, of
+  # the same version, which configure.py names in AIDM_PYTHON_EXECUTABLE.
+  set(PYTHON_HOME "${SB_ROOT_DIR}/../python")
+  set(PYTHON_EXE_PATH "$ENV{AIDM_PYTHON_EXECUTABLE}")
+  if (NOT EXISTS "${PYTHON_HOME}/Lib/site-packages" OR NOT EXISTS "${PYTHON_EXE_PATH}")
+    message(FATAL_ERROR "${CMAKE_CURRENT_LIST_FILE}: no package Python in ${PYTHON_HOME}, or "
+                        "AIDM_PYTHON_EXECUTABLE (${PYTHON_EXE_PATH}) names no Python. "
+                        "Run python configure.py build, which sets both.")
+  endif()
+  file(TO_CMAKE_PATH "${PYTHON_EXE_PATH}" PYTHON_EXE_PATH)
 
   # Use the GDAL version that comes with pip
   set(GDAL_ROOT "${PYTHON_HOME}/Lib/site-packages/osgeo")

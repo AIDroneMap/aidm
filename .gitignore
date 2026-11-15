@@ -28,6 +28,7 @@ vcpkg.unpack/
 vcpkg-env.zip
 venv/
 python312/
+/python/
 dist/
 innosetup/
 .DS_Store
