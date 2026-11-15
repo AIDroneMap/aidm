@@ -5,7 +5,7 @@ ProcessorCount(nproc)
 
 set(EXTRA_INCLUDE_DIRS "")
 if(WIN32)
-  set(OpenCV_DIR "${SB_INSTALL_DIR}/x64/vc17/lib")
+  set(OpenCV_DIR "${AIDM_OPENCV_DIR}")
   set(BUILD_CMD ${CMAKE_COMMAND} --build "${SB_BUILD_DIR}/opensfm" --config "${CMAKE_BUILD_TYPE}")
   set(LASZIP_LIB "${SB_INSTALL_DIR}/lib/laszip.lib")
 

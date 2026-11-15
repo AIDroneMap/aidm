@@ -6,6 +6,8 @@ if (WIN32)
                              -DPYTHON3_PACKAGES_PATH=${PYTHON_HOME}/lib/site-packages
                              -DPYTHON3_EXECUTABLE=${PYTHON_EXE_PATH}
                              -DWITH_MSMF=OFF
+                             -DOpenCV_ARCH=${AIDM_OPENCV_ARCH}
+                             -DOpenCV_RUNTIME=${AIDM_OPENCV_RUNTIME}
                              -DOPENCV_LIB_INSTALL_PATH=${SB_INSTALL_DIR}/lib
                              -DOPENCV_BIN_INSTALL_PATH=${SB_INSTALL_DIR}/bin)
 elseif(APPLE)
@@ -95,3 +97,15 @@ ExternalProject_Add(${_proj_name}
   LOG_CONFIGURE     OFF
   LOG_BUILD         OFF
 )
+
+if (WIN32)
+  # Stop the build before OpenSfM or odm_orthophoto configure when OpenCV's
+  # config is not in the folder they read.
+  ExternalProject_Add_Step(${_proj_name} check_config_dir
+    DEPENDEES install
+    COMMAND ${CMAKE_COMMAND} -DOPENCV_CONFIG_DIR=${AIDM_OPENCV_DIR}
+                             -DMSVC_VERSION=${MSVC_VERSION}
+                             -DOPENCV_RUNTIME=${AIDM_OPENCV_RUNTIME}
+                             -P ${CMAKE_CURRENT_LIST_DIR}/OpenCVConfigDir.cmake
+  )
+endif()

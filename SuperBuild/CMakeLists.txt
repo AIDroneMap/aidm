@@ -135,6 +135,17 @@ if (WIN32)
   set(PYTHON_HOME "${SB_ROOT_DIR}/../venv")
   set(PYTHON_EXE_PATH "${PYTHON_HOME}/Scripts/python")
 
+  # On Windows OpenCV installs its config in <arch>/<runtime>/lib and names
+  # the runtime from MSVC_VERSION. OpenCV 4.12 has no name for MSVC 14.5x
+  # (MSVC_VERSION 195x, Visual Studio 2026), so it would install the config
+  # in lib and its consumers would not find it. The build sets both names
+  # here. The OpenCV recipe passes them to OpenCV, and every tool that uses
+  # OpenCV reads its config from AIDM_OPENCV_DIR.
+  set(AIDM_OPENCV_ARCH x64)
+  set(AIDM_OPENCV_RUNTIME vc17)
+  set(AIDM_OPENCV_DIR "${SB_INSTALL_DIR}/${AIDM_OPENCV_ARCH}/${AIDM_OPENCV_RUNTIME}/lib")
+  set(WIN32_OPENCV_ARGS -DOpenCV_DIR=${AIDM_OPENCV_DIR})
+
   # Use the GDAL version that comes with pip
   set(GDAL_ROOT "${PYTHON_HOME}/Lib/site-packages/osgeo")
   set(GDAL_LIBRARY "${GDAL_ROOT}/gdal.lib")
@@ -267,7 +278,7 @@ externalproject_add(odm_orthophoto
     PREFIX            ${SB_BINARY_DIR}/odm_orthophoto
     SOURCE_DIR        ${SB_SOURCE_DIR}/odm_orthophoto
     CMAKE_ARGS        -DCMAKE_INSTALL_PREFIX:PATH=${SB_INSTALL_DIR}
-                      ${WIN32_CMAKE_ARGS} ${WIN32_GDAL_ARGS}
+                      ${WIN32_CMAKE_ARGS} ${WIN32_GDAL_ARGS} ${WIN32_OPENCV_ARGS}
 )
 
 externalproject_add(fastrasterfilter
