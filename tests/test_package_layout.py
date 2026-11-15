@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -383,26 +384,69 @@ class TestSitecustomize(unittest.TestCase):
     def test_does_nothing_outside_windows(self):
         namespace = self.load()
         self.assertEqual(namespace["DLL_DIRECTORIES"], [])
-        self.assertEqual(namespace["setup"]("/x/python", "linux", {}, None, SimpleNamespace()), [])
+        self.assertEqual(namespace["setup"]("/x/python", "linux", None), [])
 
-    def test_adds_the_superbuild_bin_and_the_bytecode_cache(self):
+    def test_adds_the_superbuild_bin(self):
         setup = self.load()["setup"]
         with tempfile.TemporaryDirectory() as tmp:
             engine = Path(tmp, "engine")
             (engine / "SuperBuild" / "install" / "bin").mkdir(parents=True)
             added = []
-            fake_sys = SimpleNamespace(pycache_prefix=None)
-            handles = setup(str(engine / "python"), "win32", {"PYTHONPYCACHEPREFIX": "C:\\cache"},
-                            lambda folder: added.append(folder) or "handle", fake_sys)
+            handles = setup(str(engine / "python"), "win32", lambda folder: added.append(folder) or "handle")
             self.assertEqual(added, [str(engine / "SuperBuild" / "install" / "bin")])
             self.assertEqual(handles, ["handle"])
-            self.assertEqual(fake_sys.pycache_prefix, "C:\\cache")
 
-    def test_keeps_a_cache_given_on_the_command_line(self):
-        setup = self.load()["setup"]
-        fake_sys = SimpleNamespace(pycache_prefix="D:\\given")
-        setup("/nowhere/python", "win32", {"PYTHONPYCACHEPREFIX": "C:\\cache"}, None, fake_sys)
-        self.assertEqual(fake_sys.pycache_prefix, "D:\\given")
+
+class TestCachePth(unittest.TestCase):
+    """00-aidm.pth sets the bytecode cache folder before any other .pth file
+    of site-packages imports a module. This runs site, as the package's
+    Python does at start, on a site-packages that also holds a .pth file
+    like setuptools' distutils-precedence.pth."""
+
+    def run_site(self, with_cache_pth):
+        with tempfile.TemporaryDirectory() as tmp:
+            site_packages = Path(tmp, "site-packages")
+            cache = Path(tmp, "cache")
+            write(site_packages / "probe_module.py", "import sys\nprint('prefix', sys.pycache_prefix)\n")
+            write(site_packages / "distutils-precedence.pth", "import probe_module\n")
+            if with_cache_pth:
+                write(site_packages / configure.PACKAGE_CACHE_PTH, configure.PACKAGE_CACHE_PTH_TEXT)
+            env = dict(os.environ, PYTHONPYCACHEPREFIX=str(cache))
+            env.pop("PYTHONDONTWRITEBYTECODE", None)
+            # -I: isolated mode, as the ._pth file of the package's Python sets it.
+            result = subprocess.run([sys.executable, "-I", "-c", "import site, sys; site.addsitedir(sys.argv[1])",
+                                     str(site_packages)], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            in_package = sorted(str(p.relative_to(site_packages)) for p in site_packages.rglob("*.pyc"))
+            in_cache = sorted(p.name for p in cache.rglob("*.pyc"))
+            return result.stdout.strip(), in_package, in_cache, str(cache)
+
+    def test_bytecode_of_other_pth_imports_goes_to_the_cache(self):
+        output, in_package, in_cache, cache = self.run_site(True)
+        self.assertEqual(output, "prefix %s" % cache)
+        self.assertEqual(in_package, [])
+        self.assertEqual(len(in_cache), 1)
+        self.assertTrue(in_cache[0].startswith("probe_module."), in_cache)
+
+    def test_without_it_bytecode_lands_in_site_packages(self):
+        output, in_package, _in_cache, _cache = self.run_site(False)
+        self.assertEqual(output, "prefix None")
+        self.assertEqual(len(in_package), 1)
+
+    def test_layout_writes_it_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = FakeBuild(tmp)
+            write(build.root / "python" / "Lib" / "site-packages" / "distutils-precedence.pth", "import os\n")
+            site_packages = build.lay_out() / "engine" / "python" / "Lib" / "site-packages"
+            self.assertEqual((site_packages / "00-aidm.pth").read_text(), configure.PACKAGE_CACHE_PTH_TEXT)
+            self.assertEqual(sorted(p.name for p in site_packages.glob("*.pth"))[0], "00-aidm.pth")
+
+    def test_a_pth_file_that_sorts_first_stops(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = FakeBuild(tmp)
+            write(build.root / "python" / "Lib" / "site-packages" / "0-early.pth", "import os\n")
+            with self.assertRaisesRegex(configure.DepsError, "0-early.pth sorts before 00-aidm.pth"):
+                build.lay_out()
 
 
 class TestArchive(unittest.TestCase):

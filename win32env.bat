@@ -24,8 +24,8 @@ rem the folders its DLLs load from.
 set "USE_PATH_FOR_GDAL_PYTHON=YES"
 
 rem The package's Python ignores PYTHON variables, because its ._pth file
-rem runs it in isolated mode. The sitecustomize module that configure.py
-rem writes into its site-packages reads this one and applies it, so the
-rem bytecode cache lives under the user's local application data, never in
-rem the package folder.
+rem runs it in isolated mode. The file 00-aidm.pth that configure.py writes
+rem into its site-packages reads this one and applies it before any module
+rem of site-packages loads, so the bytecode cache lives under the user's
+rem local application data, never in the package folder.
 set "PYTHONPYCACHEPREFIX=%LOCALAPPDATA%\AIDM\pycache"

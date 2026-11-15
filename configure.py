@@ -1402,25 +1402,36 @@ def add_engine_folder(text):
     return newline.join(lines) + newline
 
 
+# Written into the site-packages of the package's Python, whose ._pth file
+# runs it in isolated mode: it ignores the PYTHON environment variables.
+# site reads the .pth files of site-packages in the order of their names and
+# runs their import lines, before it imports sitecustomize. This one sorts
+# first, so it applies the bytecode cache folder that win32env.bat sets in
+# PYTHONPYCACHEPREFIX before any other .pth file imports a module, such as
+# setuptools' distutils-precedence.pth, whose bytecode would otherwise land
+# in the package folder. It is one line of code, not a module, so it writes
+# no bytecode itself.
+PACKAGE_CACHE_PTH = "00-aidm.pth"
+PACKAGE_CACHE_PTH_TEXT = ("import os, sys; sys.pycache_prefix = sys.pycache_prefix or "
+                          "os.environ.get('PYTHONPYCACHEPREFIX') or None\n")
+
 # Written into the site-packages of the package's Python. Python imports
 # sitecustomize at the start of every process, after site has read the
 # ._pth file, so this runs in run.py and in every Python the engine starts.
 PACKAGE_SITECUSTOMIZE = r'''"""Sets up every Python process of the AIDM engine package on Windows.
 
-Written by configure.py package. The ._pth file of this Python runs it in
-isolated mode: it ignores the PYTHON environment variables, and since
-Python 3.8 no Python loads the DLLs of an extension module from PATH. So
-this module adds the SuperBuild's bin folder to the folders DLLs load from,
-for pdal, cv2, osgeo and OpenSfM in any process and any import order, and
-applies the bytecode cache folder that win32env.bat sets in
-PYTHONPYCACHEPREFIX.
+Written by configure.py package. Since Python 3.8 no Python loads the DLLs
+of an extension module from PATH. So this module adds the SuperBuild's bin
+folder to the folders DLLs load from, for pdal, cv2, osgeo and OpenSfM in
+any process and any import order. The bytecode cache folder is set before,
+by 00-aidm.pth.
 """
 
 import os
 import sys
 
 
-def setup(prefix, platform, environ, add_dll_directory, sys_module):
+def setup(prefix, platform, add_dll_directory):
     """Return the handles of the DLL folders added for the Python in prefix."""
     if platform != "win32":
         return []
@@ -1429,14 +1440,11 @@ def setup(prefix, platform, environ, add_dll_directory, sys_module):
     bin_dir = os.path.join(engine, "SuperBuild", "install", "bin")
     if os.path.isdir(bin_dir):
         added.append(add_dll_directory(bin_dir))
-    cache = environ.get("PYTHONPYCACHEPREFIX")
-    if cache and not getattr(sys_module, "pycache_prefix", None):
-        sys_module.pycache_prefix = cache
     return added
 
 
 # Kept so the folders stay added for the life of the process.
-DLL_DIRECTORIES = setup(sys.prefix, sys.platform, os.environ, getattr(os, "add_dll_directory", None), sys)
+DLL_DIRECTORIES = setup(sys.prefix, sys.platform, getattr(os, "add_dll_directory", None))
 '''
 
 
@@ -1573,6 +1581,13 @@ def lay_out_package(root, dest, variant, redist_dir, deps_licenses, build_info=(
         raise DepsError("%s exists already: a wheel ships one, and the package needs its own" % sitecustomize)
     with open(sitecustomize, "w", encoding="utf-8", newline="\n") as f:
         f.write(PACKAGE_SITECUSTOMIZE)
+    site_packages = os.path.join(package_python, SITE_PACKAGES)
+    with open(os.path.join(site_packages, PACKAGE_CACHE_PTH), "w", encoding="utf-8", newline="\n") as f:
+        f.write(PACKAGE_CACHE_PTH_TEXT)
+    pth_files = sorted(name for name in os.listdir(site_packages) if name.lower().endswith(".pth"))
+    if pth_files[0] != PACKAGE_CACHE_PTH:
+        raise DepsError("%s sorts before %s in %s, so it runs before the bytecode cache folder is set"
+                        % (pth_files[0], PACKAGE_CACHE_PTH, site_packages))
 
     # A path into the build folder works on the build machine only: a
     # module that reads one there loads files from the build, and on a
