@@ -12,6 +12,7 @@ PATCH = Path(__file__).resolve().parents[1] / "cmake/OpenMVSWeightedPatch.cmake"
 RECIPE = Path(__file__).resolve().parents[1] / "cmake/External-OpenMVS.cmake"
 WIDTH_PATCH = Path(__file__).resolve().parents[2] / "docker/patch_openmvs.py"
 EQUIVALENCE_TEST = Path(__file__).resolve().parent / "WeightedPatchTest.cpp"
+HEADER = Path(__file__).resolve().parent / "WeightedPatch.h"
 
 
 @unittest.skipUnless(PATCH.exists() and shutil.which("cmake"),
@@ -140,6 +141,31 @@ class TestScalarReferenceDeclaration(unittest.TestCase):
                       text)
         self.assertNotIn("__declspec", text)
         self.assertNotIn("#pragma", text)
+
+
+@unittest.skipUnless(RECIPE.exists() and HEADER.exists(), "the OpenMVS recipe is needed")
+class TestOpenMVSOpenMPFlag(unittest.TestCase):
+    """The header uses `omp simd`, which MSVC compiles only with /openmp:experimental."""
+
+    def recipe(self):
+        return RECIPE.read_text()
+
+    def test_header_uses_omp_simd(self):
+        self.assertIn("#pragma omp simd", HEADER.read_text(),
+                      "the MSVC OpenMP flag of the recipe is no longer needed")
+
+    def test_windows_asks_findopenmp_for_the_experimental_runtime(self):
+        recipe = self.recipe()
+        match = re.search(r"if\(WIN32\)\s*set\(_openmvs_openmp_args "
+                          r"-DOpenMP_RUNTIME_MSVC=experimental\)\s*endif\(\)", recipe)
+        self.assertIsNotNone(match, "the recipe must set the experimental OpenMP runtime on Windows")
+
+    def test_openmvs_receives_the_argument(self):
+        recipe = self.recipe()
+        configure = recipe[recipe.index("ExternalProject_Add(${_proj_name}"):]
+        self.assertIn("${_openmvs_openmp_args}", configure.split("#--Build step")[0])
+        # Only the Windows branch sets it: Linux compilers do not read the variable.
+        self.assertEqual(recipe.count("-DOpenMP_RUNTIME_MSVC=experimental"), 1)
 
 
 @unittest.skipUnless(RECIPE.exists() and WIDTH_PATCH.exists() and shutil.which("git"),
