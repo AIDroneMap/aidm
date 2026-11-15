@@ -4,7 +4,18 @@ include(ProcessorCount)
 ProcessorCount(nproc)
 
 set(EXTRA_INCLUDE_DIRS "")
+set(_opensfm_gpu_args "")
 if(WIN32)
+  # The variant decides CUDA (ADR 0006), as for OpenMVS. OpenSfM turns CUDA
+  # on whenever it finds a toolkit, so the cpu variant turns it off. The
+  # cuda variant requires the toolkit, for GPU feature matching. This
+  # configure step is a command of its own, so it does not take the toolset
+  # of the SuperBuild: it gets it here.
+  if(AIDM_WINDOWS_VARIANT STREQUAL "cuda")
+    set(_opensfm_gpu_args -T "${CMAKE_GENERATOR_TOOLSET}" -DOPENSFM_USE_CUDA=ON ${AIDM_CUDA_ARGS})
+  else()
+    set(_opensfm_gpu_args -DOPENSFM_USE_CUDA=OFF)
+  endif()
   set(OpenCV_DIR "${AIDM_OPENCV_DIR}")
   set(BUILD_CMD ${CMAKE_COMMAND} --build "${SB_BUILD_DIR}/opensfm" --config "${CMAKE_BUILD_TYPE}")
   set(LASZIP_LIB "${SB_INSTALL_DIR}/lib/laszip.lib")
@@ -47,6 +58,7 @@ ExternalProject_Add(${_proj_name}
     -Dabsl_DIR=${SB_INSTALL_DIR}/lib/cmake/absl
     -DCMAKE_INSTALL_PREFIX=${SB_INSTALL_DIR}/bin/${_proj_name}/opensfm
     ${WIN32_CMAKE_ARGS}
+    ${_opensfm_gpu_args}
   BUILD_COMMAND ${BUILD_CMD}
   #--Build step-----------------
   BINARY_DIR        ${_SB_BINARY_DIR}

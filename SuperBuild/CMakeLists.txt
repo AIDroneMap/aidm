@@ -205,9 +205,33 @@ if (WIN32)
     message(FATAL_ERROR "${CMAKE_CURRENT_LIST_FILE}: ${SB_INSTALL_DIR}/share/proj has no proj.db after the copy.")
   endif()
 
-  message("Copying CUDA DLLs...")
-  file(GLOB CUDA_DLLS "$ENV{CUDA_PATH}/bin/cudart64*.dll")
-  file(COPY ${CUDA_DLLS} DESTINATION "${SB_INSTALL_DIR}/bin")
+  # The two Windows variants of ADR 0006. python configure.py build names
+  # one. The cpu variant builds OpenMVS and OpenSfM without CUDA. The cuda
+  # variant builds both with the CUDA toolkit in AIDM_CUDA_TOOLKIT, through
+  # the Visual Studio toolset cuda=<that folder>, which configure.py gives
+  # this build with -T. Every external project with the default configure
+  # step takes the toolset from this build; the OpenSfM recipe passes it on
+  # itself. configure.py copies the CUDA runtime DLLs the tools import into
+  # the install folder after the build and checks both variants. No CUDA DLL
+  # is copied here.
+  set(AIDM_WINDOWS_VARIANT "" CACHE STRING "Windows variant, cpu or cuda. python configure.py build sets it.")
+  if (NOT AIDM_WINDOWS_VARIANT STREQUAL "cpu" AND NOT AIDM_WINDOWS_VARIANT STREQUAL "cuda")
+    message(FATAL_ERROR "${CMAKE_CURRENT_LIST_FILE}: AIDM_WINDOWS_VARIANT is '${AIDM_WINDOWS_VARIANT}', not cpu or cuda. "
+                        "Run python configure.py build cpu or python configure.py build cuda.")
+  endif()
+  if (AIDM_WINDOWS_VARIANT STREQUAL "cuda")
+    file(TO_CMAKE_PATH "${AIDM_CUDA_TOOLKIT}" AIDM_CUDA_TOOLKIT)
+    if (NOT EXISTS "${AIDM_CUDA_TOOLKIT}/bin/nvcc.exe")
+      message(FATAL_ERROR "${CMAKE_CURRENT_LIST_FILE}: the cuda variant needs AIDM_CUDA_TOOLKIT, the folder of the "
+                          "CUDA toolkit, and '${AIDM_CUDA_TOOLKIT}' has no bin/nvcc.exe. python configure.py build cuda sets it from CUDA_PATH.")
+    endif()
+    if (NOT CMAKE_GENERATOR_TOOLSET MATCHES "(^|,)cuda=")
+      message(FATAL_ERROR "${CMAKE_CURRENT_LIST_FILE}: the cuda variant needs the toolset cuda=${AIDM_CUDA_TOOLKIT}, "
+                          "and this build has '${CMAKE_GENERATOR_TOOLSET}'. Run python configure.py build cuda in a new build folder.")
+    endif()
+    set(AIDM_CUDA_ARGS -DCMAKE_REQUIRE_FIND_PACKAGE_CUDA=ON -DCUDA_TOOLKIT_ROOT_DIR=${AIDM_CUDA_TOOLKIT})
+  endif()
+  message(STATUS "Windows variant: ${AIDM_WINDOWS_VARIANT}")
 
   set(WIN32_GDAL_ARGS -DGDAL_FOUND=TRUE -DGDAL_LIBRARY=${GDAL_LIBRARY} -DGDAL_INCLUDE_DIR=${GDAL_INCLUDE_DIR})
 elseif(APPLE)
