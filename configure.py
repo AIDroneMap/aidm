@@ -27,6 +27,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tempfile
 import urllib.request
 import zipfile
 
@@ -73,10 +74,9 @@ REQUIREMENTS_FILE = os.path.join(ROOT, "requirements.txt")
 PTH_SITE_PACKAGES = "Lib\\site-packages"
 PTH_IMPORT_SITE = "import site"
 
-# Pins of requirements.txt published on PyPI as source only. Each one is
-# pure Python, so pip makes its wheel without a compiler. Every other pin
-# must come as a wheel.
-SOURCE_ONLY_PINS = ("vmem",)
+# Pins of requirements.txt published on PyPI as source only, each with the
+# SHA-256 of its sdist. Every other pin must come as a wheel.
+SOURCE_PINS_FILE = os.path.join(ROOT, "SuperBuild", "windows-python-source.txt")
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
@@ -88,6 +88,8 @@ _EMBEDDABLE_PYTHON = re.compile(r"^python-(\d+\.\d+\.\d+)-embed-amd64\.zip$")
 # and optionally one sys_platform marker.
 _REQUIREMENT = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[A-Za-z0-9,._-]+\])?==([A-Za-z0-9.+!-]+)"
                           r"\s*(?:;\s*sys_platform\s*==\s*['\"]([a-z0-9]+)['\"])?$")
+# One source pin: a name, one exact version, then one or more hashes.
+_SOURCE_PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([A-Za-z0-9.+!-]+)(?:\s+--hash=sha256:[0-9a-f]{64})+$")
 
 
 class DepsError(Exception):
@@ -516,18 +518,81 @@ def read_requirements(path=REQUIREMENTS_FILE, platform_name=None):
     return pins
 
 
-def pip_install_command(python, site_packages, requirements=REQUIREMENTS_FILE):
-    """The pip command that installs the wheels of requirements into site_packages.
+def canonical_name(name):
+    """The name of a distribution as PyPI compares it."""
+    return re.sub(r"[-_.]+", "-", name).lower()
 
-    --target installs into that folder and ignores what the Python running
-    pip already has. --no-compile writes no bytecode: the engine keeps its
-    bytecode cache outside the package.
+
+def load_source_pins(path=SOURCE_PINS_FILE):
+    """Return (name, version) of every source pin in path, or raise DepsError naming the file.
+
+    Each line is name==version followed by --hash=sha256: and the SHA-256 of
+    the sdist. pip reads the hashes itself.
     """
-    cmd = [python, "-m", "pip", "install", "--disable-pip-version-check", "--no-input",
-           "--no-compile", "--only-binary", ":all:"]
-    for name in SOURCE_ONLY_PINS:
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = [line.strip() for line in f]
+    except OSError as e:
+        raise DepsError("%s: cannot read the source pins: %s" % (path, e))
+    pins = []
+    for number, line in enumerate(lines, 1):
+        if not line or line.startswith("#"):
+            continue
+        match = _SOURCE_PIN.match(line)
+        if not match:
+            raise DepsError("%s line %d: expected name==version followed by --hash=sha256: "
+                            "and 64 lowercase hex digits" % (path, number))
+        pins.append(match.groups())
+    return pins
+
+
+def check_source_pins(source_pins, pins, path=SOURCE_PINS_FILE, requirements=REQUIREMENTS_FILE):
+    """Stop unless every source pin is a pin of requirements.txt at the same version."""
+    versions = {canonical_name(name): version for name, version in pins}
+    for name, version in source_pins:
+        if versions.get(canonical_name(name)) != version:
+            raise DepsError("%s pins %s==%s, but %s pins %s" % (
+                path, name, version, requirements,
+                "%s==%s" % (name, versions[canonical_name(name)]) if canonical_name(name) in versions
+                else "no %s for Windows" % name))
+
+
+def write_wheel_requirements(requirements, source_pins, dest):
+    """Write to dest the lines of requirements without the source pins."""
+    names = {canonical_name(name) for name, _ in source_pins}
+    with open(requirements, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    kept = []
+    for line in lines:
+        match = _REQUIREMENT.match(line.split("#", 1)[0].strip())
+        if not match or canonical_name(match.group(1)) not in names:
+            kept.append(line)
+    with open(dest, "w", encoding="utf-8") as f:
+        f.write("\n".join(kept) + "\n")
+    return dest
+
+
+def _pip_install(python, site_packages):
+    # --target installs into that folder and ignores what the Python running
+    # pip already has. --no-compile writes no bytecode: the engine keeps its
+    # bytecode cache outside the package.
+    return [python, "-m", "pip", "install", "--disable-pip-version-check", "--no-input",
+            "--no-compile", "--target", site_packages]
+
+
+def pip_wheels_command(python, site_packages, requirements):
+    """The pip command that installs requirements, and what they need, from wheels only."""
+    return _pip_install(python, site_packages) + ["--only-binary", ":all:", "-r", requirements]
+
+
+def pip_source_command(python, site_packages, source_pins, path=SOURCE_PINS_FILE):
+    """The pip command that builds and installs the source pins, each checked
+    against the SHA-256 of its sdist. Each is pure Python and needs nothing
+    else, so pip builds it without a compiler and installs nothing more."""
+    cmd = _pip_install(python, site_packages) + ["--require-hashes", "--no-deps"]
+    for name, _ in source_pins:
         cmd += ["--no-binary", name]
-    return cmd + ["--target", site_packages, "-r", requirements]
+    return cmd + ["-r", path]
 
 
 # Runs in the package's Python, which loads the export's DLLs, so it runs
@@ -632,24 +697,28 @@ def check_embedded_python(python_dir, export_bin, pins, version, env, runner=sub
                         % (python_dir, result.returncode))
 
 
-def python_marker(pin, requirements=REQUIREMENTS_FILE):
-    return "%s %s %s\n" % (pin["tag"], pin["assets"]["python"]["sha256"], sha256_of(requirements))
+def python_marker(pin, requirements=REQUIREMENTS_FILE, source_pins=SOURCE_PINS_FILE):
+    return "%s %s %s %s\n" % (pin["tag"], pin["assets"]["python"]["sha256"],
+                               sha256_of(requirements), sha256_of(source_pins))
 
 
 def prepare_python(pin, archive, export_dir=EXPORT_DIR, python_dir=PYTHON_DIR,
-                   requirements=REQUIREMENTS_FILE, python=None, env=None, runner=subprocess.run):
+                   requirements=REQUIREMENTS_FILE, source_pins_file=SOURCE_PINS_FILE,
+                   python=None, env=None, runner=subprocess.run):
     """Lay out the package's Python in python_dir and check it.
 
-    Unpacks the embeddable package, edits its ._pth file and installs the
-    wheels of requirements, unless a marker says python_dir already holds
+    Unpacks the embeddable package, edits its ._pth file, installs the
+    wheels of requirements and builds the source pins, unless a marker says python_dir already holds
     this pin's package with these requirements. Then replaces its SQLite
     with the export's and runs the check in the package's Python.
     """
     env = os.environ if env is None else env
     version = embeddable_python_version(pin)
     pins = read_requirements(requirements, platform_name="win32")
+    source_pins = load_source_pins(source_pins_file)
+    check_source_pins(source_pins, pins, source_pins_file, requirements)
     site_packages = os.path.join(python_dir, SITE_PACKAGES)
-    marker = python_marker(pin, requirements)
+    marker = python_marker(pin, requirements, source_pins_file)
     marker_path = os.path.join(python_dir, PYTHON_MARKER)
     current = ""
     if os.path.isfile(marker_path):
@@ -664,12 +733,18 @@ def prepare_python(pin, archive, export_dir=EXPORT_DIR, python_dir=PYTHON_DIR,
             z.extractall(python_dir)
         edit_pth_file(python_dir)
         os.makedirs(site_packages, exist_ok=True)
-        cmd = pip_install_command(python or sys.executable, site_packages, requirements)
-        print("Running %s" % subprocess.list2cmdline(cmd))
-        result = runner(cmd, env=env)
-        if result.returncode != 0:
-            raise DepsError("pip did not install %s into %s, exit code %s"
-                            % (requirements, site_packages, result.returncode))
+        python = python or sys.executable
+        with tempfile.TemporaryDirectory(prefix="aidm-requirements-") as folder:
+            wheels = write_wheel_requirements(requirements, source_pins,
+                                              os.path.join(folder, "requirements-wheels.txt"))
+            for cmd, source in ((pip_wheels_command(python, site_packages, wheels), requirements),
+                                (pip_source_command(python, site_packages, source_pins, source_pins_file),
+                                 source_pins_file)):
+                print("Running %s" % subprocess.list2cmdline(cmd))
+                result = runner(cmd, env=env)
+                if result.returncode != 0:
+                    raise DepsError("pip did not install %s into %s, exit code %s"
+                                    % (source, site_packages, result.returncode))
         with open(marker_path, "w", encoding="utf-8") as f:
             f.write(marker)
 

@@ -24,6 +24,7 @@ spec.loader.exec_module(configure)
 # SuperBuild/, so there this is the last release's pin, or no pin at all.
 PIN_FILE = ROOT / "SuperBuild" / "windows-deps.json"
 CMAKE_PIN_FILE = ROOT / "SuperBuild" / "windows-cmake.txt"
+SOURCE_PINS_FILE = ROOT / "SuperBuild" / "windows-python-source.txt"
 
 GOOD_HASH = "d5521b4a9e864505c550abae99ff593d501bd08225583e69b3a9a4ca7f36a03f"
 
@@ -647,8 +648,6 @@ class TestReadRequirements(unittest.TestCase):
         self.assertNotIn("gdal", pins)
         self.assertEqual(pins["numpy"], "2.3.2")
         self.assertEqual(pins["onnxruntime"], "1.22.1")
-        for name in configure.SOURCE_ONLY_PINS:
-            self.assertIn(name, pins)
 
     def test_line_the_check_cannot_read_stops_the_build(self):
         for line in ("numpy>=2", "numpy==2.3.2 ; python_version < '3.13'", "https://example.invalid/x.whl"):
@@ -656,16 +655,76 @@ class TestReadRequirements(unittest.TestCase):
                 self.read("six==1.17.0\n%s\n" % line)
 
 
-class TestPipInstallCommand(unittest.TestCase):
+VMEM_SDIST_SHA256 = "95fe9ba737edea8e5737fb9ddda7031d7ca62fd53f53c1c4e95195f3c7d801fd"
+
+
+def write_source_pins(folder, text):
+    path = Path(folder) / "windows-python-source.txt"
+    path.write_text(text)
+    return str(path)
+
+
+class TestSourcePins(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_pins_load_with_their_hashes(self):
+        path = write_source_pins(self.tmp.name, "# why\nvmem==1.0.2 --hash=sha256:%s\n" % VMEM_SDIST_SHA256)
+        self.assertEqual(configure.load_source_pins(path), [("vmem", "1.0.2")])
+
+    def test_pin_without_a_hash_is_rejected(self):
+        for line in ("vmem==1.0.2", "vmem>=1 --hash=sha256:%s" % VMEM_SDIST_SHA256,
+                     "vmem==1.0.2 --hash=sha256:%s" % VMEM_SDIST_SHA256.upper()):
+            path = write_source_pins(self.tmp.name, "%s\n" % line)
+            with self.assertRaisesRegex(configure.DepsError, "line 1: expected name==version"):
+                configure.load_source_pins(path)
+
+    def test_version_must_be_the_one_requirements_pin(self):
+        configure.check_source_pins([("vmem", "1.0.2")], [("numpy", "2.3.2"), ("vmem", "1.0.2")])
+        with self.assertRaisesRegex(configure.DepsError, "pins vmem==1.0.3, but .* pins vmem==1.0.2"):
+            configure.check_source_pins([("vmem", "1.0.3")], [("vmem", "1.0.2")])
+        with self.assertRaisesRegex(configure.DepsError, "no vmem for Windows"):
+            configure.check_source_pins([("vmem", "1.0.2")], [("numpy", "2.3.2")])
+
+    def test_wheel_requirements_leave_out_the_source_pins(self):
+        requirements = Path(self.tmp.name) / "requirements.txt"
+        requirements.write_text("numpy==2.3.2\nVMem==1.0.2  # source\nsix==1.17.0\n")
+        dest = configure.write_wheel_requirements(str(requirements), [("vmem", "1.0.2")],
+                                                  str(Path(self.tmp.name) / "wheels.txt"))
+        self.assertEqual(Path(dest).read_text(), "numpy==2.3.2\nsix==1.17.0\n")
+
+
+@unittest.skipUnless(SOURCE_PINS_FILE.exists(), "the source pins are a SuperBuild file; unit CI has the last release's copy")
+class TestCommittedSourcePins(unittest.TestCase):
+    def test_vmem_is_pinned_by_its_sdist_at_the_version_of_requirements(self):
+        self.assertEqual(configure.load_source_pins(str(SOURCE_PINS_FILE)), [("vmem", "1.0.2")])
+        self.assertIn("--hash=sha256:%s" % VMEM_SDIST_SHA256, SOURCE_PINS_FILE.read_text())
+        configure.check_source_pins(configure.load_source_pins(str(SOURCE_PINS_FILE)),
+                                    configure.read_requirements(str(ROOT / "requirements.txt"), "win32"))
+
+
+class TestPipCommands(unittest.TestCase):
     def test_wheels_only_into_the_package_site_packages(self):
-        cmd = configure.pip_install_command("py.exe", "site", "req.txt")
+        cmd = configure.pip_wheels_command("py.exe", "site", "req.txt")
         self.assertEqual(cmd[:4], ["py.exe", "-m", "pip", "install"])
         self.assertEqual(cmd[cmd.index("--only-binary") + 1], ":all:")
-        self.assertEqual(cmd[cmd.index("--no-binary") + 1], "vmem")
+        self.assertNotIn("--no-binary", cmd)
         self.assertEqual(cmd[cmd.index("--target") + 1], "site")
         self.assertEqual(cmd[-2:], ["-r", "req.txt"])
         self.assertIn("--no-compile", cmd)
-        self.assertNotIn("--user", cmd)
+
+    def test_source_pins_are_built_from_their_hashed_sdist_only(self):
+        cmd = configure.pip_source_command("py.exe", "site", [("vmem", "1.0.2")], "source.txt")
+        self.assertEqual(cmd[:4], ["py.exe", "-m", "pip", "install"])
+        self.assertIn("--require-hashes", cmd)
+        self.assertIn("--no-deps", cmd)
+        self.assertEqual(cmd[cmd.index("--no-binary") + 1], "vmem")
+        self.assertNotIn("--only-binary", cmd)
+        self.assertEqual(cmd[cmd.index("--target") + 1], "site")
+        self.assertEqual(cmd[-2:], ["-r", "source.txt"])
 
 
 class TestMinimalPath(unittest.TestCase):
@@ -769,14 +828,20 @@ class FakePythonTools:
         self.pip_exit = pip_exit
         self.check_exit = check_exit
         self.calls = []
+        self.requirements_seen = []
         self.sqlite_at_check = None
 
     def __call__(self, cmd, **kwargs):
         self.calls.append((list(cmd), kwargs))
         if cmd[1:4] == ["-m", "pip", "install"]:
+            self.requirements_seen.append(Path(cmd[-1]).read_text())
             if self.pip_exit == 0:
                 target = cmd[cmd.index("--target") + 1]
-                for name, version in configure.read_requirements(cmd[-1], platform_name="win32"):
+                if "--require-hashes" in cmd:
+                    pins = configure.load_source_pins(cmd[-1])
+                else:
+                    pins = configure.read_requirements(cmd[-1], platform_name="win32")
+                for name, version in pins:
                     make_dist(target, name, version)
             return SimpleNamespace(returncode=self.pip_exit)
         self.sqlite_at_check = Path(kwargs["cwd"], "sqlite3.dll").read_bytes()
@@ -802,7 +867,8 @@ class TestPreparePython(unittest.TestCase):
         self.export_bin = str(bin_dir)
         self.python_dir = root / "python"
         self.requirements = root / "requirements.txt"
-        self.requirements.write_text("numpy==2.3.2\ngdal==3.8.4 ; sys_platform == 'linux'\n")
+        self.requirements.write_text("numpy==2.3.2\nvmem==1.0.2\ngdal==3.8.4 ; sys_platform == 'linux'\n")
+        self.source_pins = write_source_pins(self.tmp.name, "vmem==1.0.2 --hash=sha256:%s\n" % VMEM_SDIST_SHA256)
         self.pin = make_pin()
         self.pin["assets"]["python"]["file"] = self.archive.name
 
@@ -813,6 +879,7 @@ class TestPreparePython(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             configure.prepare_python(self.pin, str(self.archive), export_dir=str(self.export_dir),
                                      python_dir=str(self.python_dir), requirements=str(self.requirements),
+                                     source_pins_file=self.source_pins,
                                      python="runner-python", env={"Path": r"C:\Emulator", "SystemRoot": r"C:\W"},
                                      runner=tools)
 
@@ -821,11 +888,18 @@ class TestPreparePython(unittest.TestCase):
         self.prepare(tools)
         site = self.python_dir / "Lib" / "site-packages"
         self.assertTrue((site / "numpy-2.3.2.dist-info").is_dir())
+        self.assertTrue((site / "vmem-1.0.2.dist-info").is_dir())
         self.assertFalse((site / "gdal-3.8.4.dist-info").exists())
         self.assertIn(b"\r\nLib\\site-packages\r\n", (self.python_dir / "python312._pth").read_bytes())
         self.assertIn(b"\r\nimport site\r\n", (self.python_dir / "python312._pth").read_bytes())
-        self.assertEqual(tools.pip_calls()[0][0], "runner-python")
-        self.assertEqual(tools.pip_calls()[0][tools.pip_calls()[0].index("--target") + 1], str(site))
+        wheels, source = tools.pip_calls()
+        self.assertEqual(wheels[0], "runner-python")
+        self.assertEqual(wheels[wheels.index("--target") + 1], str(site))
+        self.assertEqual(source[source.index("--target") + 1], str(site))
+        self.assertIn("--only-binary", wheels)
+        self.assertEqual(tools.requirements_seen[0], "numpy==2.3.2\ngdal==3.8.4 ; sys_platform == 'linux'\n")
+        self.assertIn("--require-hashes", source)
+        self.assertEqual(source[-1], self.source_pins)
         self.assertEqual(tools.sqlite_at_check, b"export sqlite")
 
         check, kwargs = tools.calls[-1]
@@ -833,7 +907,7 @@ class TestPreparePython(unittest.TestCase):
         args = json.loads(check[3])
         self.assertEqual(args["version"], "3.12.10")
         self.assertEqual(args["site_packages"], str(site))
-        self.assertEqual(args["pins"], [["numpy", "2.3.2"]])
+        self.assertEqual(args["pins"], [["numpy", "2.3.2"], ["vmem", "1.0.2"]])
         self.assertEqual(args["imports"], ["numpy"])
         self.assertEqual(kwargs["env"]["PATH"].split(";"), [str(self.python_dir), self.export_bin, r"C:\W\System32",
                                                             r"C:\W", r"C:\W\System32\Wbem"])
@@ -849,16 +923,23 @@ class TestPreparePython(unittest.TestCase):
         self.prepare(FakePythonTools())
         stale = self.python_dir / "Lib" / "site-packages" / "stale.py"
         stale.write_text("")
-        self.requirements.write_text("numpy==2.3.3\n")
+        self.requirements.write_text("numpy==2.3.3\nvmem==1.0.2\n")
         tools = FakePythonTools()
         self.prepare(tools)
-        self.assertEqual(len(tools.pip_calls()), 1)
+        self.assertEqual(len(tools.pip_calls()), 2)
         self.assertFalse(stale.exists())
 
     def test_failed_pip_stops_and_leaves_no_marker(self):
         with self.assertRaisesRegex(configure.DepsError, "pip did not install"):
             self.prepare(FakePythonTools(pip_exit=1))
         self.assertFalse((self.python_dir / configure.PYTHON_MARKER).exists())
+
+    def test_source_pin_of_another_version_stops_before_pip(self):
+        self.requirements.write_text("numpy==2.3.2\nvmem==1.0.3\n")
+        tools = FakePythonTools()
+        with self.assertRaisesRegex(configure.DepsError, "pins vmem==1.0.2, but .* pins vmem==1.0.3"):
+            self.prepare(tools)
+        self.assertEqual(tools.calls, [])
 
     def test_failed_check_stops_the_build(self):
         with self.assertRaisesRegex(configure.DepsError, "failed its check, exit code 1"):
