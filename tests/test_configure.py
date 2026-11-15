@@ -178,6 +178,10 @@ class TestCommittedPin(unittest.TestCase):
         pin = configure.load_pin(str(PIN_FILE))
         self.assertEqual(pin["triplet"], "x64-windows-avx2")
 
+    def test_pin_names_the_embeddable_python(self):
+        pin = configure.load_pin(str(PIN_FILE))
+        self.assertEqual(configure.embeddable_python_version(pin), "3.12.10")
+
 
 def make_export(path, top="aidm-windows-deps", triplet="x64-windows-avx2", toolchain=True):
     with zipfile.ZipFile(path, "w") as z:
@@ -610,10 +614,6 @@ class TestEnableSitePackages(unittest.TestCase):
 
 
 class TestBuildPython(unittest.TestCase):
-    def test_committed_pin_names_the_embeddable_python(self):
-        pin = configure.load_pin(str(PIN_FILE))
-        self.assertEqual(configure.embeddable_python_version(pin), "3.12.10")
-
     def test_asset_of_another_name_is_rejected(self):
         pin = make_pin()
         with self.assertRaisesRegex(configure.DepsError, "python-X.Y.Z-embed-amd64.zip"):
