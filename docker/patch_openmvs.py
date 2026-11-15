@@ -10,4 +10,7 @@ content = config.read_bytes()
 if content.count(before) == 1 and after not in content:
     config.write_bytes(content.replace(before, after))
 elif before in content or content.count(after) != 1:
+    if b"\r\n" in content:
+        raise SystemExit("OpenMVS Config.h has CRLF line endings; "
+                         "clone OpenMVS with core.autocrlf=false")
     raise SystemExit("OpenMVS width detection changed; check Config.h before building")

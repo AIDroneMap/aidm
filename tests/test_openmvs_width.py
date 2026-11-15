@@ -12,6 +12,19 @@ AFTER = b"#if __x86_64__ || __ppc64__ || __aarch64__\n"
 HEADER = (b"#define KEEP_THIS 1\n" + BEFORE +
           b"#define _ENVIRONMENT64\n#else\n#define _ENVIRONMENT32\n#endif\n"
           b"#define _PLATFORM_ARM 1\n#undef _USE_SSE\n")
+# Lines 114 to 135 of libs/Common/Config.h at OpenMVS commit 988e582f, the
+# commit External-OpenMVS.cmake pins (Boost Software License 1.0).
+PINNED_BLOCK = (b"#else // _MSC_VER\n\n"
+                b"#if !defined(_DEBUG) && !defined(NDEBUG)\n#define _DEBUG\n#endif\n\n"
+                b"//----------------------------------------------------------------------\n"
+                b"// DLL_API is ignored for all other systems\n"
+                b"//----------------------------------------------------------------------\n"
+                b"#define EXPORT_API\n#define IMPORT_API\n#define GENERAL_API\n"
+                b"#define GENERAL_TPL\n\n"
+                b"// Define platform type\n"
+                b"#if __x86_64__ || __ppc64__\n"
+                b"#define _ENVIRONMENT64\n#else\n#define _ENVIRONMENT32\n#endif\n\n"
+                b"#endif // _MSC_VER\n")
 
 
 class TestOpenMvsWidth(unittest.TestCase):
@@ -61,6 +74,36 @@ class TestOpenMvsWidth(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("OpenMVS width detection changed", result.stderr)
                 self.assertEqual(config.read_bytes(), header)
+
+
+    def test_pinned_block_gains_only_aarch64(self):
+        # The Linux images patch this block. Their result must stay these bytes.
+        expected = PINNED_BLOCK.replace(b"#if __x86_64__ || __ppc64__\n",
+                                        b"#if __x86_64__ || __ppc64__ || __aarch64__\n")
+        self.assertEqual(len(expected), len(PINNED_BLOCK) + len(b" || __aarch64__"))
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "Config.h"
+            config.write_bytes(PINNED_BLOCK)
+
+            result = self.run_patch(config)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(config.read_bytes(), expected)
+
+    def test_crlf_header_fails_and_names_line_endings(self):
+        # Git for Windows checks out CRLF unless the clone sets core.autocrlf=false.
+        for header in (HEADER, PINNED_BLOCK):
+            crlf = header.replace(b"\n", b"\r\n")
+            with self.subTest(header=header), tempfile.TemporaryDirectory() as directory:
+                config = Path(directory) / "Config.h"
+                config.write_bytes(crlf)
+
+                result = self.run_patch(config)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("CRLF line endings", result.stderr)
+                self.assertIn("core.autocrlf=false", result.stderr)
+                self.assertEqual(config.read_bytes(), crlf)
 
 
 if __name__ == "__main__":
