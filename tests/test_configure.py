@@ -936,6 +936,67 @@ class TestPreparePython(unittest.TestCase):
         self.assertEqual(len(tools.pip_calls()), 2)
         self.assertFalse(stale.exists())
 
+    def make_built_tree(self):
+        """A SuperBuild tree where opencv and ceres have built and installed,
+        with the stamps a multi-config generator writes. OpenCV's install
+        manifest names cv2 in python/ the way CMake writes it on Windows,
+        with forward slashes and the SuperBuild folder in the path."""
+        root = Path(self.tmp.name) / "SuperBuild"
+        stamps = {}
+        for name, installed in (("opencv", "%s/SuperBuild/../python/lib/site-packages/cv2/__init__.py"
+                                 % Path(self.tmp.name).as_posix()),
+                                ("ceres", "%s/install/lib/ceres.lib" % root.as_posix())):
+            stamps[name] = root / "build" / name / "stamp" / "Release"
+            stamps[name].mkdir(parents=True)
+            for step in ("download", "configure", "build", "install", "done"):
+                (stamps[name] / ("%s-%s" % (name, step))).write_text("")
+            (root / "build" / name / "install_manifest.txt").write_text(installed + "\n")
+        (root / "install").mkdir()
+        return root / "build", root / "install", stamps
+
+    def decide(self, build_dir, install_dir):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return configure.superbuild_needed(str(self.python_dir), str(build_dir), str(install_dir))
+
+    def test_new_layout_after_a_superbuild_installs_its_python_modules_again(self):
+        build_dir, install_dir, stamps = self.make_built_tree()
+        self.prepare(FakePythonTools())
+        self.assertTrue(self.decide(build_dir, install_dir))
+        configure.superbuild_done(str(self.python_dir))
+        (stamps["opencv"] / "opencv-install").write_text("")
+        cv2 = self.python_dir / "Lib" / "site-packages" / "cv2"
+        cv2.mkdir()
+
+        self.prepare(FakePythonTools())
+        self.assertTrue(cv2.exists())
+        self.assertFalse(self.decide(build_dir, install_dir))
+
+        self.requirements.write_text("numpy==2.3.2\nvmem==1.0.2\n# a comment\n")
+        self.prepare(FakePythonTools())
+        self.assertFalse(cv2.exists())
+        self.assertTrue(self.decide(build_dir, install_dir))
+        self.assertFalse((stamps["opencv"] / "opencv-install").exists())
+        self.assertTrue((stamps["opencv"] / "opencv-build").exists())
+        self.assertTrue((stamps["opencv"] / "opencv-done").exists())
+        self.assertTrue((stamps["ceres"] / "ceres-install").exists())
+
+    def test_failed_superbuild_after_a_new_layout_is_run_again(self):
+        build_dir, install_dir, stamps = self.make_built_tree()
+        self.prepare(FakePythonTools())
+        self.assertTrue(self.decide(build_dir, install_dir))
+        (stamps["opencv"] / "opencv-install").write_text("")
+        self.prepare(FakePythonTools())
+        self.assertTrue(self.decide(build_dir, install_dir))
+        self.assertFalse((stamps["opencv"] / "opencv-install").exists())
+
+    def test_fresh_tree_builds_and_reused_layout_with_a_built_tree_does_not(self):
+        self.prepare(FakePythonTools())
+        configure.superbuild_done(str(self.python_dir))
+        root = Path(self.tmp.name) / "SuperBuild"
+        self.assertTrue(self.decide(root / "build", root / "install"))
+        build_dir, install_dir, _ = self.make_built_tree()
+        self.assertFalse(self.decide(build_dir, install_dir))
+
     def test_failed_pip_stops_and_leaves_no_marker(self):
         with self.assertRaisesRegex(configure.DepsError, "pip did not install"):
             self.prepare(FakePythonTools(pip_exit=1))

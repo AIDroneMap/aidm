@@ -68,6 +68,10 @@ MSVC_ARCH_FLAG = "/arch:AVX2"
 # the wheels of requirements.txt in its Lib\site-packages.
 PYTHON_DIR = os.path.join(ROOT, "python")
 PYTHON_MARKER = ".aidm-python"
+# Present from the moment python/ is laid out anew until a SuperBuild has
+# run after it: the SuperBuild installs Python modules, such as cv2, into
+# python/, and a new layout has lost them.
+PYTHON_REINSTALL_MARKER = ".aidm-superbuild-reinstall"
 SITE_PACKAGES = os.path.join("Lib", "site-packages")
 REQUIREMENTS_FILE = os.path.join(ROOT, "requirements.txt")
 # The lines the ._pth file needs, in the spelling of its publisher.
@@ -723,8 +727,10 @@ def prepare_python(pin, archive, export_dir=EXPORT_DIR, python_dir=PYTHON_DIR,
     """Lay out the package's Python in python_dir and check it.
 
     Unpacks the embeddable package, edits its ._pth file, installs the
-    wheels of requirements and builds the source pins, unless a marker says python_dir already holds
-    this pin's package with these requirements. Then replaces its SQLite
+    wheels of requirements and builds the source pins, unless a marker says
+    python_dir already holds this pin's package with these requirements. A
+    new layout also leaves PYTHON_REINSTALL_MARKER, so the SuperBuild
+    installs its Python modules into it again. Then replaces its SQLite
     with the export's and runs the check in the package's Python.
     """
     env = os.environ if env is None else env
@@ -746,6 +752,8 @@ def prepare_python(pin, archive, export_dir=EXPORT_DIR, python_dir=PYTHON_DIR,
         print("Extracting %s --> %s" % (archive, python_dir))
         with zipfile.ZipFile(archive) as z:
             z.extractall(python_dir)
+        with open(os.path.join(python_dir, PYTHON_REINSTALL_MARKER), "w", encoding="utf-8") as f:
+            f.write("The SuperBuild has not installed its Python modules into this layout yet.\n")
         edit_pth_file(python_dir)
         os.makedirs(site_packages, exist_ok=True)
         python = python or sys.executable
@@ -802,8 +810,9 @@ def build():
     build_dir = os.path.join(ROOT, "SuperBuild", "build")
 
     def superbuild():
-        if not os.path.exists(build_dir) or not os.path.exists(os.path.join(ROOT, "SuperBuild", "install")):
+        if superbuild_needed(PYTHON_DIR, build_dir, os.path.join(ROOT, "SuperBuild", "install")):
             build_superbuild(cmake, load_cmake_pin(), build_dir, env)
+            superbuild_done(PYTHON_DIR)
 
     def check():
         check_embedded_python(PYTHON_DIR, os.path.join(EXPORT_DIR, "installed", pin["triplet"], "bin"),
@@ -811,6 +820,80 @@ def build():
                               os.environ, imports=SUPERBUILD_PYTHON_IMPORTS, dll_folders=[SUPERBUILD_BIN])
 
     build_then_check(superbuild, check)
+
+
+def _inside(path, folder):
+    """Whether path is folder or below it, as the file system compares them."""
+    path = os.path.normcase(os.path.normpath(path))
+    folder = os.path.normcase(os.path.normpath(folder))
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def python_module_projects(build_dir, python_dir):
+    """Return the folders under build_dir of the external projects whose
+    install wrote into python_dir, by their CMake install manifests.
+
+    Each external project of the SuperBuild has its folder build_dir/<name>,
+    with its stamps in a stamp folder there and its install_manifest.txt in
+    its binary folder below it. The manifest lists every file the install
+    wrote, so it still names them after python_dir has been laid out anew.
+    """
+    projects = []
+    if not os.path.isdir(build_dir):
+        return projects
+    for name in sorted(os.listdir(build_dir)):
+        project = os.path.join(build_dir, name)
+        if not os.path.isdir(os.path.join(project, "stamp")):
+            continue
+        for folder, _dirs, files in os.walk(project):
+            if "install_manifest.txt" not in files:
+                continue
+            with open(os.path.join(folder, "install_manifest.txt"), encoding="utf-8", errors="replace") as f:
+                if any(line.strip() and _inside(line.strip(), python_dir) for line in f):
+                    projects.append(project)
+                    break
+    return projects
+
+
+def remove_install_stamps(project):
+    """Remove the install stamp of one external project, so the next build
+    runs its install step again; return the removed paths.
+
+    ExternalProject marks each finished step with a file <name>-<step> in
+    the project's stamp folder, and with a multi-config generator in a
+    folder per configuration below it. Its build stamp stays, so nothing is
+    compiled again.
+    """
+    removed = []
+    for folder, _dirs, files in os.walk(os.path.join(project, "stamp")):
+        for name in files:
+            if name.endswith("-install"):
+                os.remove(os.path.join(folder, name))
+                removed.append(os.path.join(folder, name))
+    return sorted(removed)
+
+
+def superbuild_needed(python_dir, build_dir, install_dir):
+    """Decide whether build() runs the SuperBuild.
+
+    It runs on a tree that has not built yet, and after python_dir was laid
+    out anew. Then the install stamps of the projects whose install wrote
+    into python_dir, such as OpenCV with cv2, are removed first, so the
+    SuperBuild installs their Python modules into the new layout.
+    """
+    if os.path.isfile(os.path.join(python_dir, PYTHON_REINSTALL_MARKER)):
+        projects = python_module_projects(build_dir, python_dir)
+        for project in projects:
+            remove_install_stamps(project)
+        print("python/ was laid out anew: the SuperBuild installs again %s"
+              % (", ".join(os.path.basename(p) for p in projects) or "no project, none installed into it yet"))
+        return True
+    return not os.path.exists(build_dir) or not os.path.exists(install_dir)
+
+
+def superbuild_done(python_dir):
+    """Record that the SuperBuild has installed its Python modules into python/."""
+    safe_remove(os.path.join(python_dir, PYTHON_REINSTALL_MARKER))
 
 
 def build_then_check(build_step, check_step):
