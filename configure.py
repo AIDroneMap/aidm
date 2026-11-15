@@ -778,9 +778,10 @@ sys.exit(1 if failures else 0)
 # which loads the export's DLLs. After the SuperBuild, cv2 and pdal too:
 # OpenCV and the PDAL Python bindings install their modules into the
 # package's site-packages. pdal comes after osgeo: its DLLs are found in the
-# folders osgeo adds from PATH.
+# folders osgeo adds from PATH. codem last: the engine imports it, and it
+# imports cv2, pdal and distutils, which setuptools provides on Windows.
 EMBEDDED_PYTHON_IMPORTS = ("numpy", "osgeo")
-SUPERBUILD_PYTHON_IMPORTS = ("numpy", "cv2", "osgeo", "pdal")
+SUPERBUILD_PYTHON_IMPORTS = ("numpy", "cv2", "osgeo", "pdal", "codem")
 SUPERBUILD_INSTALL = os.path.join(ROOT, "SuperBuild", "install")
 SUPERBUILD_BIN = os.path.join(SUPERBUILD_INSTALL, "bin")
 # The data folders GDAL and PROJ read at run time, which the SuperBuild

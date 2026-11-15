@@ -23,6 +23,10 @@ onnxruntime==1.22.1
 pygltflib==1.16.5
 packaging==25.0
 codem==0.26.1
+# Windows only. Python 3.12 has no distutils, and codem 0.26.1 imports
+# distutils.util. setuptools provides it, as python3-setuptools from
+# configure.sh does in the Linux images, at the version Ubuntu 24.04 ships.
+setuptools==68.1.2 ; sys_platform == 'win32'
 matplotlib==3.10.3
 trimesh==4.7.1
 piexif==1.1.3
