@@ -1,0 +1,6 @@
+# The CMake that configure.py installs from PyPI and builds the Windows
+# SuperBuild with, on the hosted runner and on any other Windows machine.
+# pip installs it with --require-hashes: a wheel whose SHA-256 is not listed
+# here stops the build. The hash is the one of the win_amd64 wheel.
+# 4.2 is the first CMake with a generator for Visual Studio 18 2026.
+cmake==4.4.5 --hash=sha256:d5521b4a9e864505c550abae99ff593d501bd08225583e69b3a9a4ca7f36a03f
