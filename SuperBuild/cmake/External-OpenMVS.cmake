@@ -45,6 +45,19 @@ if(WIN32)
   file(DOWNLOAD "https://github.com/WebODM/windows-deps/releases/download/v3.7.0/nvcuda_dummy.dll" "${SB_INSTALL_DIR}/bin/nvcuda.dll")
 endif()
 
+# OpenMVS reads OpenCV's config from one folder. On Windows that is the folder
+# SuperBuild/CMakeLists.txt names for OpenCV; the Linux folder holds nothing
+# there, and CMake would find OpenCV's Windows pack config in the install
+# folder and stop with no binaries for this compiler.
+if(WIN32)
+  if(NOT DEFINED AIDM_OPENCV_DIR OR "${AIDM_OPENCV_DIR}" STREQUAL "")
+    message(FATAL_ERROR "External-OpenMVS.cmake: AIDM_OPENCV_DIR is not set. SuperBuild/CMakeLists.txt sets it on Windows.")
+  endif()
+  set(_openmvs_opencv_dir "${AIDM_OPENCV_DIR}")
+else()
+  set(_openmvs_opencv_dir "${SB_INSTALL_DIR}/lib/cmake/opencv4")
+endif()
+
 ExternalProject_Add(${_proj_name}
   DEPENDS           ceres opencv vcg eigen34
   PREFIX            ${_SB_BINARY_DIR}
@@ -66,7 +79,7 @@ ExternalProject_Add(${_proj_name}
   #--Configure step-------------
   SOURCE_DIR        ${SB_SOURCE_DIR}/${_proj_name}
   CMAKE_ARGS
-    -DOpenCV_DIR=${SB_INSTALL_DIR}/lib/cmake/opencv4
+    -DOpenCV_DIR=${_openmvs_opencv_dir}
     -DVCG_ROOT=${SB_SOURCE_DIR}/vcg
     -DEIGEN3_INCLUDE_DIR=${SB_SOURCE_DIR}/eigen34/
     -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
