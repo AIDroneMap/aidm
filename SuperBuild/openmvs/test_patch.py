@@ -1,13 +1,16 @@
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 
 PATCH = Path(__file__).resolve().parents[1] / "cmake/OpenMVSWeightedPatch.cmake"
 RECIPE = Path(__file__).resolve().parents[1] / "cmake/External-OpenMVS.cmake"
+WIDTH_PATCH = Path(__file__).resolve().parents[2] / "docker/patch_openmvs.py"
 
 
 @unittest.skipUnless(PATCH.exists() and shutil.which("cmake"),
@@ -82,6 +85,90 @@ class TestOpenMVSPatchStep(unittest.TestCase):
         self.assertNotEqual(weighted, -1, "weighted patch kernel is missing")
         self.assertTrue(width < chained < weighted,
                         "the weighted patch must be a second COMMAND of the patch step")
+
+
+@unittest.skipUnless(RECIPE.exists() and WIDTH_PATCH.exists() and shutil.which("git"),
+                     "the OpenMVS recipe, the width patch and git are needed")
+class TestOpenMVSCheckout(unittest.TestCase):
+    """The patch step reads LF bytes even where git checks out CRLF by default."""
+
+    header = (b"// Define platform type\n#if __x86_64__ || __ppc64__\n"
+              b"#define _ENVIRONMENT64\n#else\n#define _ENVIRONMENT32\n#endif\n")
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.no_config = self.root / "empty.gitconfig"
+        self.no_config.write_text("")
+        self.upstream = self.root / "upstream"
+        (self.upstream / "libs/Common").mkdir(parents=True)
+        (self.upstream / "libs/Common/Config.h").write_bytes(self.header)
+        identity = ["-c", "user.name=test", "-c", "user.email=test@example.invalid"]
+        self.git(["init", "-q", str(self.upstream)], self.root)
+        self.git(["add", "."], self.upstream)
+        self.git(identity + ["commit", "-q", "-m", "Config.h"], self.upstream)
+        # Git for Windows writes core.autocrlf=true into the system config by
+        # default. A global config with the same value stands in for it here.
+        windows_config = self.root / "windows.gitconfig"
+        windows_config.write_text("[core]\n\tautocrlf = true\n")
+        self.windows_env = dict(self.env(), GIT_CONFIG_GLOBAL=str(windows_config))
+
+    def env(self):
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith("GIT_")}
+        environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=str(self.no_config))
+        return environment
+
+    def git(self, arguments, cwd, env=None):
+        subprocess.run(["git"] + arguments, cwd=cwd, env=env or self.env(),
+                       check=True, capture_output=True)
+
+    def recipe_git_config(self):
+        recipe = RECIPE.read_text()
+        start = recipe.find("ExternalProject_Add(${_proj_name}")
+        end = recipe.find("#--Configure step", start)
+        self.assertNotEqual(start, -1)
+        self.assertNotEqual(end, -1)
+        values = []
+        for line in recipe[start:end].splitlines():
+            words = line.split("#")[0].split()
+            if words and words[0] == "GIT_CONFIG":
+                values.extend(words[1:])
+        return values
+
+    def clone(self, name, git_config):
+        options = [part for value in git_config for part in ("--config", value)]
+        target = self.root / name
+        self.git(["clone", "-q"] + options + [str(self.upstream), str(target)],
+                 self.root, self.windows_env)
+        return target / "libs/Common/Config.h"
+
+    def width_patch(self, config):
+        return subprocess.run([sys.executable, str(WIDTH_PATCH), str(config)],
+                              capture_output=True, text=True)
+
+    def test_recipe_clone_keeps_lf_and_width_patch_applies(self):
+        git_config = self.recipe_git_config()
+        self.assertIn("core.autocrlf=false", git_config)
+        config = self.clone("openmvs", git_config)
+        self.assertEqual(config.read_bytes(), self.header)
+
+        result = self.width_patch(config)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b"#if __x86_64__ || __ppc64__ || __aarch64__\n", config.read_bytes())
+
+    def test_default_windows_clone_is_refused_by_width_patch(self):
+        config = self.clone("default", [])
+        crlf = self.header.replace(b"\n", b"\r\n")
+        self.assertEqual(config.read_bytes(), crlf)
+
+        result = self.width_patch(config)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CRLF line endings", result.stderr)
+        self.assertEqual(config.read_bytes(), crlf)
 
 
 if __name__ == "__main__":
