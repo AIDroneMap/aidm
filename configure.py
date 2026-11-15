@@ -34,6 +34,7 @@ tests/test_package_layout.py import this file on Linux.
 
 import argparse
 import hashlib
+import inspect
 import json
 import os
 import platform
@@ -1439,6 +1440,38 @@ DLL_DIRECTORIES = setup(sys.prefix, sys.platform, os.environ, getattr(os, "add_d
 '''
 
 
+# Text files of the package's Python that Python reads at run time.
+RUN_TIME_TEXT_SUFFIXES = (".py", ".pth", ".cfg")
+
+
+def path_spellings(folder):
+    """The ways a text file may spell folder, lower case: with either slash,
+    and with the doubled backslashes of a Python string."""
+    folder = os.path.normpath(folder).rstrip("\\/")
+    back = folder.replace("/", "\\")
+    return sorted({folder.lower(), folder.replace("\\", "/").lower(), back.lower(),
+                   back.replace("\\", "\\\\").lower()})
+
+
+def files_naming(folder, named, suffixes=RUN_TIME_TEXT_SUFFIXES):
+    """Return the files under folder, with one of suffixes, whose text names the folder named.
+
+    The name must end there: a folder whose name only starts the same way
+    does not count."""
+    spellings = [re.compile(re.escape(spelling.encode("utf-8")) + rb"(?![\w.-])")
+                 for spelling in path_spellings(named)]
+    found = []
+    for parent, _dirs, files in os.walk(folder):
+        for name in files:
+            if name.lower().endswith(suffixes):
+                path = os.path.join(parent, name)
+                with open(path, "rb") as f:
+                    text = f.read().lower()
+                if any(spelling.search(text) for spelling in spellings):
+                    found.append(path)
+    return sorted(found)
+
+
 def _copy_tree(source, target):
     shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
@@ -1541,6 +1574,14 @@ def lay_out_package(root, dest, variant, redist_dir, deps_licenses, build_info=(
     with open(sitecustomize, "w", encoding="utf-8", newline="\n") as f:
         f.write(PACKAGE_SITECUSTOMIZE)
 
+    # A path into the build folder works on the build machine only: a
+    # module that reads one there loads files from the build, and on a
+    # pilot's machine finds nothing.
+    named = files_naming(package_python, root)
+    if named:
+        raise DepsError("files of the package's Python name the build folder %s, which a pilot's machine "
+                        "does not have: %s" % (root, ", ".join(named)))
+
     imports = read_imports([engine])
     runtime = vc_runtime_dlls(redist_dir)
     needed = needed_runtime(imports, runtime)
@@ -1610,10 +1651,31 @@ def write_archive(top, tar, runner=subprocess.run):
     return archive
 
 
+def loaded_from_outside(loaded, engine, build, shipped):
+    """Return the files of loaded that come from outside engine and either
+    lie in the build folder or carry a name that the package ships.
+
+    PACKAGE_CHECK runs this in the package's Python on the files the
+    process has loaded; shipped is the set of lower-case names of every
+    .dll and .pyd file in the package."""
+    import os
+
+    def norm(path):
+        return os.path.normcase(os.path.normpath(path))
+
+    def inside(path, folder):
+        path, folder = norm(path), norm(folder)
+        return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+    return [path for path in loaded
+            if not inside(path, engine) and (inside(path, build) or os.path.basename(path).lower() in shipped)]
+
+
 # Runs in the laid-out package through win32env.bat, as the task API runs
-# the engine. Its one argument is a JSON file: the engine folder and the
-# Windows folder. Exits 1 with an Error line for each failure.
-PACKAGE_CHECK = r"""
+# the engine. Its one argument is a JSON file: the engine folder, the
+# Windows folder and the build folder. Exits 1 with an Error line for each
+# failure.
+_PACKAGE_CHECK = r"""
 import importlib
 import json
 import os
@@ -1679,14 +1741,13 @@ try:
 except Exception as e:
     failures.append("cannot load the engine's runner: %s: %s" % (type(e).__name__, e))
 
-# Every DLL the process loaded whose name the package ships must come from the package.
+# No DLL or module may come from the build folder, and none whose name the
+# package ships may come from anywhere but the package.
 import ctypes
 from ctypes import wintypes
-shipped = {}
-for folder in (os.path.join(engine, "python"), os.path.join(install, "bin")):
-    for name in os.listdir(folder):
-        if name.lower().endswith(".dll"):
-            shipped[name.lower()] = folder
+shipped = set()
+for parent, _dirs, files in os.walk(engine):
+    shipped.update(name.lower() for name in files if name.lower().endswith((".dll", ".pyd")))
 psapi = ctypes.WinDLL("psapi", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 kernel32.GetCurrentProcess.restype = wintypes.HANDLE
@@ -1701,20 +1762,21 @@ for handle in handles[:needed.value // ctypes.sizeof(wintypes.HMODULE)]:
     buffer = ctypes.create_unicode_buffer(32768)
     if kernel32.GetModuleFileNameW(handle, buffer, len(buffer)):
         loaded.append(buffer.value)
-outside = [path for path in loaded
-           if os.path.basename(path).lower() in shipped and not inside(path, engine)]
-print("The process loaded %d DLLs, %d of them from the package"
+print("The process loaded %d DLLs and modules, %d of them from the package"
       % (len(loaded), sum(1 for path in loaded if inside(path, engine))))
-for path in outside:
-    failures.append("loaded %s from outside the package, which ships its own" % path)
+for path in loaded_from_outside(loaded, engine, args["build"], shipped):
+    failures.append("loaded %s from outside the package: it is in the build folder, "
+                    "or the package ships a file of that name" % path)
 
 for failure in failures:
     print("Error: %s" % failure)
 sys.exit(1 if failures else 0)
 """
+PACKAGE_CHECK = _PACKAGE_CHECK.replace("failures = []\n",
+                                       "failures = []\n\n\n" + inspect.getsource(loaded_from_outside) + "\n\n", 1)
 
 
-def check_package(top, env, runner=subprocess.run):
+def check_package(top, env, build=ROOT, runner=subprocess.run):
     """Run PACKAGE_CHECK and run.bat --help in the package, each through
     cmd.exe as the task API starts them, with the environment env."""
     engine = os.path.join(top, "engine")
@@ -1725,7 +1787,7 @@ def check_package(top, env, runner=subprocess.run):
             f.write(PACKAGE_CHECK)
         arguments = os.path.join(folder, "check.json")
         with open(arguments, "w", encoding="utf-8") as f:
-            json.dump({"engine": engine, "windows": windows}, f)
+            json.dump({"engine": engine, "windows": windows, "build": build}, f)
         for cmd in (["cmd.exe", "/d", "/c", "call", os.path.join(engine, "win32env.bat"),
                      "&&", "python", script, arguments],
                     ["cmd.exe", "/d", "/c", "call", os.path.join(engine, "run.bat"), "--help"]):

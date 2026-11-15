@@ -2,8 +2,14 @@ set(_proj_name opencv)
 set(_SB_BINARY_DIR "${SB_BINARY_DIR}/${_proj_name}")
 
 if (WIN32)
+  # cv2's loader reads config.py and config-3.12.py, which OpenCV writes
+  # from the two install paths below. Relative to the install prefix, they
+  # become paths relative to the cv2 folder; absolute, they name this build
+  # tree, and the package would load cv2's DLLs and extension from there.
+  # python/ is outside the prefix, so its path starts with "..".
+  file(RELATIVE_PATH _aidm_cv2_packages "${SB_INSTALL_DIR}" "${PYTHON_HOME}/lib/site-packages")
   set(OCV_CMAKE_EXTRA_ARGS -DPYTHON3_NUMPY_INCLUDE_DIRS=${PYTHON_HOME}/lib/site-packages/numpy/_core/include
-                             -DPYTHON3_PACKAGES_PATH=${PYTHON_HOME}/lib/site-packages
+                             -DPYTHON3_PACKAGES_PATH=${_aidm_cv2_packages}
                              -DPYTHON3_EXECUTABLE=${PYTHON_EXE_PATH}
                              -DPYTHON3_INCLUDE_DIR=${AIDM_PYTHON_INCLUDE_DIR}
                              -DPYTHON3_LIBRARY=${AIDM_PYTHON_LIBRARY}
@@ -11,7 +17,7 @@ if (WIN32)
                              -DOpenCV_ARCH=${AIDM_OPENCV_ARCH}
                              -DOpenCV_RUNTIME=${AIDM_OPENCV_RUNTIME}
                              -DOPENCV_LIB_INSTALL_PATH=${SB_INSTALL_DIR}/lib
-                             -DOPENCV_BIN_INSTALL_PATH=${SB_INSTALL_DIR}/bin)
+                             -DOPENCV_BIN_INSTALL_PATH=bin)
 elseif(APPLE)
   # macOS is unable to automatically detect our Python libs
   set(OCV_CMAKE_EXTRA_ARGS -DPYTHON3_NUMPY_INCLUDE_DIRS=${PYTHON_HOME}/lib/python3.12/site-packages/numpy/core/include

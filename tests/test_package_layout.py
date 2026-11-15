@@ -295,10 +295,83 @@ class TestLayOutPackage(unittest.TestCase):
         with self.assertRaisesRegex(configure.DepsError, "configure.py build"):
             self.build.lay_out()
 
+    def test_relative_cv2_config_passes(self):
+        # What OpenCV writes when External-OpenCV.cmake gives it install paths
+        # relative to the install prefix on Windows.
+        cv2 = self.build.root / "python" / "Lib" / "site-packages" / "cv2"
+        write(cv2 / "config.py", "import os\n\nBINARIES_PATHS = [\n    os.path.join(os.path.join("
+              "LOADER_DIR, '../../../../SuperBuild/install'), 'bin')\n] + BINARIES_PATHS\n")
+        write(cv2 / "config-3.12.py", "PYTHON_EXTENSIONS_PATHS = [\n    os.path.join(LOADER_DIR, 'python-3.12')\n]"
+              " + PYTHON_EXTENSIONS_PATHS\n")
+        self.build.lay_out()
+
+    def test_a_file_naming_the_build_folder_stops(self):
+        root = str(self.build.root)
+        cv2 = self.build.root / "python" / "Lib" / "site-packages" / "cv2"
+        for name, text in (("config.py", "BINARIES_PATHS = [os.path.join('%s/SuperBuild/install', 'bin')]"
+                            % root.replace("\\", "/")),
+                           ("config-3.12.py", "PYTHON_EXTENSIONS_PATHS = ['%s']"
+                            % (root + "/python/lib/site-packages/cv2").replace("/", "\\\\")),
+                           ("extra.pth", (root + "/SuperBuild/install/bin").replace("/", "\\").upper())):
+            with self.subTest(name=name):
+                path = write(cv2 / name, text)
+                with self.assertRaisesRegex(configure.DepsError, "name the build folder"):
+                    self.build.lay_out()
+                path.unlink()
+
     def test_a_new_layout_replaces_the_old_one(self):
         top = self.build.lay_out()
         write(top / "engine" / "stale.txt", "left from before")
         self.assertFalse((self.build.lay_out() / "engine" / "stale.txt").exists())
+
+
+class TestPathSpellings(unittest.TestCase):
+    def test_windows_folder_in_every_spelling(self):
+        self.assertEqual(configure.path_spellings("D:\\a\\aidm\\aidm"),
+                         ["d:/a/aidm/aidm", "d:\\\\a\\\\aidm\\\\aidm", "d:\\a\\aidm\\aidm"])
+
+    def test_only_run_time_text_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp, "a.py"), "x = 'D:/a/aidm/aidm/python'")
+            write(Path(tmp, "b.pyi"), "x = 'D:/a/aidm/aidm/python'")
+            write(Path(tmp, "c.pth"), "D:\\A\\AIDM\\AIDM\\python")
+            write(Path(tmp, "d.py"), "x = 'D:/a/aidm/aidm2'")
+            self.assertEqual([os.path.basename(p) for p in configure.files_naming(tmp, "D:\\a\\aidm\\aidm")],
+                             ["a.py", "c.pth"])
+
+
+class TestLoadedFromOutside(unittest.TestCase):
+    def test_build_folder_and_shipped_names(self):
+        build = "/w/aidm"
+        engine = "/w/aidm/dist/aidm-0.3.0-windows-x64/engine"
+        loaded = [engine + "/python/python312.dll",
+                  engine + "/SuperBuild/install/bin/opencv_core4120.dll",
+                  "/w/aidm/SuperBuild/install/bin/opencv_core4120.dll",
+                  "/w/aidm/python/Lib/site-packages/cv2/python-3.12/cv2.cp312-win_amd64.pyd",
+                  "/w/aidm/vcpkg/installed/x64-windows-avx2/bin/zlib1.dll",
+                  "/Windows/System32/kernel32.dll",
+                  "/Program Files/Other/msvcp140.dll"]
+        shipped = {"python312.dll", "opencv_core4120.dll", "msvcp140.dll", "cv2.cp312-win_amd64.pyd"}
+        self.assertEqual(configure.loaded_from_outside(loaded, engine, build, shipped), loaded[2:5] + loaded[6:])
+
+    def test_the_check_script_carries_it(self):
+        self.assertIn(configure.inspect.getsource(configure.loaded_from_outside), configure.PACKAGE_CHECK)
+        self.assertIn('loaded_from_outside(loaded, engine, args["build"], shipped)', configure.PACKAGE_CHECK)
+
+
+class TestReinstallFindsCv2(unittest.TestCase):
+    """configure.py build reinstalls the projects whose install wrote into
+    python/. With the relative install path, OpenCV's manifest names python/
+    through the install prefix and "..", and is still found."""
+
+    def test_manifest_with_a_relative_python_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = root / "SuperBuild" / "build" / "opencv" / "build" / "install_manifest.txt"
+            write(root / "SuperBuild" / "build" / "opencv" / "stamp" / "Release" / "opencv-install", "")
+            write(manifest, "%s/SuperBuild/install/../../python/lib/site-packages/cv2/__init__.py\n" % tmp)
+            projects = configure.python_module_projects(str(root / "SuperBuild" / "build"), str(root / "python"))
+            self.assertEqual(projects, [str(root / "SuperBuild" / "build" / "opencv")])
 
 
 class TestSitecustomize(unittest.TestCase):
@@ -365,6 +438,7 @@ class TestCheckPackage(unittest.TestCase):
             if "python" in cmd:
                 args = json.loads(Path(cmd[-1]).read_text())
                 self.assertEqual(args["windows"], "C:\\Windows")
+                self.assertEqual(args["build"], configure.ROOT)
                 self.assertEqual(Path(cmd[-2]).read_text(), configure.PACKAGE_CHECK)
             return SimpleNamespace(returncode=0)
 
