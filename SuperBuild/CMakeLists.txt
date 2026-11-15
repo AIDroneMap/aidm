@@ -168,14 +168,42 @@ if (WIN32)
   set(AIDM_OPENCV_DIR "${SB_INSTALL_DIR}/${AIDM_OPENCV_ARCH}/${AIDM_OPENCV_RUNTIME}/lib")
   set(WIN32_OPENCV_ARGS -DOpenCV_DIR=${AIDM_OPENCV_DIR})
 
-  # Use the GDAL version that comes with pip
-  set(GDAL_ROOT "${PYTHON_HOME}/Lib/site-packages/osgeo")
-  set(GDAL_LIBRARY "${GDAL_ROOT}/gdal.lib")
-  set(GDAL_INCLUDE_DIR "${GDAL_ROOT}/include/gdal")
+  # GDAL, PROJ and PDAL's other libraries come from the deps export. The
+  # tools compile against GDAL's headers and import library there: PDAL
+  # reads gdal_version.h when it configures, dem2mesh, dem2points,
+  # fastrasterfilter and odm_orthophoto include gdal_priv.h. The GDAL
+  # Python bindings are the deps release's wheel, which configure.py
+  # installs into the package's Python; that wheel has no headers.
+  set(AIDM_VCPKG_INSTALLED "${VCPKG_ROOT}/installed/${AIDM_VCPKG_TRIPLET}")
+  set(GDAL_INCLUDE_DIR "${AIDM_VCPKG_INSTALLED}/include")
+  set(GDAL_LIBRARY "${AIDM_VCPKG_INSTALLED}/lib/gdal.lib")
+  foreach(_aidm_gdal_file "${GDAL_INCLUDE_DIR}/gdal_version.h" "${GDAL_INCLUDE_DIR}/gdal_priv.h" "${GDAL_LIBRARY}")
+    if (NOT EXISTS "${_aidm_gdal_file}")
+      message(FATAL_ERROR "${CMAKE_CURRENT_LIST_FILE}: the deps export has no ${_aidm_gdal_file}. "
+                          "The tools that use GDAL compile against the export's headers and import library.")
+    endif()
+  endforeach()
 
   message("Copying VCPKG DLLs...")
-  file(GLOB COPY_DLLS "${VCPKG_ROOT}/installed/${AIDM_VCPKG_TRIPLET}/bin/*.dll")
+  file(GLOB COPY_DLLS "${AIDM_VCPKG_INSTALLED}/bin/*.dll")
   file(COPY ${COPY_DLLS} DESTINATION "${SB_INSTALL_DIR}/bin")
+
+  # GDAL and PROJ read their data folders at run time: the package points
+  # GDAL_DATA and PROJ_LIB at these copies in the install folder. The CMake
+  # package files of the export stay out, so no tool of the SuperBuild finds
+  # a GDAL or PROJ config in the install folder that points at headers and
+  # libraries that are not there.
+  foreach(_aidm_data gdal proj)
+    if (NOT IS_DIRECTORY "${AIDM_VCPKG_INSTALLED}/share/${_aidm_data}")
+      message(FATAL_ERROR "${CMAKE_CURRENT_LIST_FILE}: the deps export has no ${AIDM_VCPKG_INSTALLED}/share/${_aidm_data}.")
+    endif()
+    message("Copying the ${_aidm_data} data folder of the export to ${SB_INSTALL_DIR}/share/${_aidm_data}")
+    file(COPY "${AIDM_VCPKG_INSTALLED}/share/${_aidm_data}" DESTINATION "${SB_INSTALL_DIR}/share"
+         PATTERN "*.cmake" EXCLUDE)
+  endforeach()
+  if (NOT EXISTS "${SB_INSTALL_DIR}/share/proj/proj.db")
+    message(FATAL_ERROR "${CMAKE_CURRENT_LIST_FILE}: ${SB_INSTALL_DIR}/share/proj has no proj.db after the copy.")
+  endif()
 
   message("Copying CUDA DLLs...")
   file(GLOB CUDA_DLLS "$ENV{CUDA_PATH}/bin/cudart64*.dll")

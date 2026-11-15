@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -181,6 +182,51 @@ class TestCommittedPin(unittest.TestCase):
     def test_pin_names_the_embeddable_python(self):
         pin = configure.load_pin(str(PIN_FILE))
         self.assertEqual(configure.embeddable_python_version(pin), "3.12.10")
+
+    def test_gdal_wheel_is_the_gdal_of_the_linux_images(self):
+        pin = configure.load_pin(str(PIN_FILE))
+        self.assertEqual(configure.gdal_wheel_version(pin, str(ROOT / "requirements.txt")), "3.8.4")
+
+
+GDAL_WHEEL = "gdal-3.8.4-cp312-cp312-win_amd64.whl"
+
+
+class TestGdalWheelVersion(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.requirements = Path(self.tmp.name) / "requirements.txt"
+        self.requirements.write_text("numpy==2.3.2\ngdal[numpy]==3.8.4 ; sys_platform == 'linux'\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def version(self, wheel, python="python-3.12.10-embed-amd64.zip"):
+        pin = make_pin()
+        pin["assets"]["python"]["file"] = python
+        pin["assets"]["gdal-wheel"]["file"] = wheel
+        return configure.gdal_wheel_version(pin, str(self.requirements))
+
+    def test_wheel_of_the_linux_version_for_the_package_python_passes(self):
+        self.assertEqual(self.version(GDAL_WHEEL), "3.8.4")
+        self.assertEqual(self.version("GDAL-3.8.4-cp312-cp312-win_amd64.whl"), "3.8.4")
+
+    def test_wheel_of_another_name_is_rejected(self):
+        for wheel in ("gdal.whl", "gdal-3.8.4-cp312-cp312-linux_x86_64.whl", "GDAL-3.8.4.tar.gz"):
+            with self.assertRaisesRegex(configure.DepsError, "gdal-X.Y.Z-cp312-cp312-win_amd64.whl"):
+                self.version(wheel)
+
+    def test_wheel_for_another_python_is_rejected(self):
+        with self.assertRaisesRegex(configure.DepsError, "gdal-X.Y.Z-cp312-cp312-win_amd64.whl"):
+            self.version("gdal-3.8.4-cp311-cp311-win_amd64.whl")
+        with self.assertRaisesRegex(configure.DepsError, "gdal-X.Y.Z-cp313-cp313-win_amd64.whl"):
+            self.version(GDAL_WHEEL, python="python-3.13.1-embed-amd64.zip")
+
+    def test_wheel_of_another_version_than_linux_is_rejected(self):
+        with self.assertRaisesRegex(configure.DepsError, "GDAL wheel 3.9.0, but .* pins gdal==3.8.4 for Linux"):
+            self.version("gdal-3.9.0-cp312-cp312-win_amd64.whl")
+        self.requirements.write_text("numpy==2.3.2\n")
+        with self.assertRaisesRegex(configure.DepsError, "pins no gdal for Linux"):
+            self.version(GDAL_WHEEL)
 
 
 def make_export(path, top="aidm-windows-deps", triplet="x64-windows-avx2", toolchain=True):
@@ -723,6 +769,15 @@ class TestPipCommands(unittest.TestCase):
         self.assertEqual(cmd[-2:], ["-r", "req.txt"])
         self.assertIn("--no-compile", cmd)
 
+    def test_gdal_wheel_alone_from_its_checked_download(self):
+        cmd = configure.pip_gdal_wheel_command("py.exe", "site", r"C:\dl\%s" % GDAL_WHEEL)
+        self.assertEqual(cmd[:4], ["py.exe", "-m", "pip", "install"])
+        self.assertEqual(cmd[cmd.index("--target") + 1], "site")
+        self.assertIn("--no-deps", cmd)
+        self.assertIn("--no-index", cmd)
+        self.assertNotIn("-r", cmd)
+        self.assertEqual(cmd[-1], r"C:\dl\%s" % GDAL_WHEEL)
+
     def test_source_pins_are_built_from_their_hashed_sdist_only(self):
         cmd = configure.pip_source_command("py.exe", "site", [("vmem", "1.0.2")], "source.txt")
         self.assertEqual(cmd[:4], ["py.exe", "-m", "pip", "install"])
@@ -787,10 +842,11 @@ class TestEmbeddedPythonCheck(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_check(self, pins, version=None, extra_path=()):
+    def run_check(self, pins, version=None, extra_path=(), imports=("json",), env=None):
         args = {"version": version or platform.python_version(), "site_packages": self.site,
-                "pins": pins, "imports": ["json"], "sqlite_dll": "unused"}
-        env = dict(os.environ, PYTHONPATH=os.pathsep.join([self.site] + list(extra_path)))
+                "pins": pins, "imports": list(imports), "sqlite_dll": "unused"}
+        env = dict(os.environ if env is None else env,
+                   PYTHONPATH=os.pathsep.join([self.site] + list(extra_path)))
         return subprocess.run([sys.executable, "-c", configure.EMBEDDED_PYTHON_CHECK, json.dumps(args)],
                               env=env, capture_output=True, text=True)
 
@@ -823,6 +879,109 @@ class TestEmbeddedPythonCheck(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("not 3.0.0", result.stdout)
 
+    def test_failed_import_fails(self):
+        result = self.run_check([["alpha", "1.0"]], imports=["json", "aidm_no_such_module"])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Error: import aidm_no_such_module failed: ModuleNotFoundError", result.stdout)
+
+    def gdal_check(self, gdal_sqlite):
+        """Run the check with osgeo imported from a fake GDAL whose SQLite
+        driver reports gdal_sqlite, or the stdlib's version when None."""
+        make_fake_osgeo(self.site)
+        env = dict(os.environ)
+        env.pop("FAKE_GDAL_SQLITE", None)
+        if gdal_sqlite is not None:
+            env["FAKE_GDAL_SQLITE"] = gdal_sqlite
+        return self.run_check([["alpha", "1.0"]], imports=["json", "osgeo"], env=env)
+
+    def test_gdal_reporting_the_stdlib_sqlite_passes(self):
+        result = self.gdal_check(None)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Imported osgeo", result.stdout)
+        self.assertIn("GDAL 3.8.4 reports SQLite %s" % sqlite3.sqlite_version, result.stdout)
+
+    def test_gdal_reporting_another_sqlite_fails(self):
+        result = self.gdal_check("3.0.1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("GDAL 3.8.4 reports SQLite 3.0.1", result.stdout)
+        self.assertIn("Error: GDAL reports SQLite 3.0.1, the stdlib sqlite3 runs %s" % sqlite3.sqlite_version,
+                      result.stdout)
+
+    def test_gdal_without_its_sqlite_driver_fails(self):
+        result = self.gdal_check("none")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Error: GDAL cannot report its SQLite version: AttributeError", result.stdout)
+
+    def test_no_comparison_without_osgeo(self):
+        result = self.run_check([["alpha", "1.0"]])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("GDAL", result.stdout)
+
+
+def make_fake_osgeo(site_packages):
+    """A stand-in for the osgeo package of the GDAL wheel: its SQLite driver
+    answers sqlite_version() with FAKE_GDAL_SQLITE, by default the stdlib's
+    version, and does not exist when FAKE_GDAL_SQLITE is none."""
+    package = Path(site_packages) / "osgeo"
+    package.mkdir()
+    (package / "__init__.py").write_text("__version__ = '3.8.4'\n")
+    (package / "gdal.py").write_text("__version__ = '3.8.4'\n")
+    (package / "ogr.py").write_text(
+        "import os\n"
+        "import sqlite3\n"
+        "VERSION = os.environ.get('FAKE_GDAL_SQLITE', sqlite3.sqlite_version)\n"
+        "class Feature:\n"
+        "    def GetField(self, index):\n"
+        "        return VERSION\n"
+        "class Result:\n"
+        "    def GetNextFeature(self):\n"
+        "        return Feature()\n"
+        "class DataSource:\n"
+        "    def ExecuteSQL(self, sql):\n"
+        "        assert sql == 'SELECT sqlite_version()', sql\n"
+        "        return Result()\n"
+        "    def ReleaseResultSet(self, result):\n"
+        "        pass\n"
+        "class Driver:\n"
+        "    def CreateDataSource(self, name):\n"
+        "        assert name == ':memory:', name\n"
+        "        return DataSource()\n"
+        "def GetDriverByName(name):\n"
+        "    return Driver() if name == 'SQLite' and VERSION != 'none' else None\n")
+
+
+class TestCheckDataFolders(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.install = Path(self.tmp.name) / "install"
+        for folder, required in (("gdal", "gdalvrt.xsd"), ("proj", "proj.db")):
+            (self.install / "share" / folder).mkdir(parents=True)
+            (self.install / "share" / folder / required).write_text("data")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_both_folders_pass_and_are_printed(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            configure.check_data_folders(str(self.install))
+        self.assertIn("Data folder %s present, with 1 files, gdalvrt.xsd among them"
+                      % (self.install / "share" / "gdal"), out.getvalue())
+        self.assertIn("Data folder %s present, with 1 files, proj.db among them"
+                      % (self.install / "share" / "proj"), out.getvalue())
+
+    def test_missing_proj_db_stops(self):
+        (self.install / "share" / "proj" / "proj.db").unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(configure.DepsError, "share.proj has no proj.db"):
+                configure.check_data_folders(str(self.install))
+
+    def test_missing_gdal_folder_stops(self):
+        (self.install / "share" / "gdal" / "gdalvrt.xsd").unlink()
+        (self.install / "share" / "gdal").rmdir()
+        with self.assertRaisesRegex(configure.DepsError, "share.gdal has no gdalvrt.xsd"):
+            configure.check_data_folders(str(self.install))
+
 
 class FakePythonTools:
     """Stands in for subprocess.run: plays pip and the package's Python.
@@ -841,6 +1000,10 @@ class FakePythonTools:
     def __call__(self, cmd, **kwargs):
         self.calls.append((list(cmd), kwargs))
         if cmd[1:4] == ["-m", "pip", "install"]:
+            if cmd[-1].endswith(".whl"):
+                if self.pip_exit == 0:
+                    make_dist(cmd[cmd.index("--target") + 1], "gdal", Path(cmd[-1]).name.split("-")[1])
+                return SimpleNamespace(returncode=self.pip_exit)
             self.requirements_seen.append(Path(cmd[-1]).read_text())
             if self.pip_exit == 0:
                 target = cmd[cmd.index("--target") + 1]
@@ -876,15 +1039,18 @@ class TestPreparePython(unittest.TestCase):
         self.requirements = root / "requirements.txt"
         self.requirements.write_text("numpy==2.3.2\nvmem==1.0.2\ngdal==3.8.4 ; sys_platform == 'linux'\n")
         self.source_pins = write_source_pins(self.tmp.name, "vmem==1.0.2 --hash=sha256:%s\n" % VMEM_SDIST_SHA256)
+        self.wheel = root / GDAL_WHEEL
+        self.wheel.write_bytes(b"wheel")
         self.pin = make_pin()
         self.pin["assets"]["python"]["file"] = self.archive.name
+        self.pin["assets"]["gdal-wheel"]["file"] = GDAL_WHEEL
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def prepare(self, tools):
         with contextlib.redirect_stdout(io.StringIO()):
-            configure.prepare_python(self.pin, str(self.archive), export_dir=str(self.export_dir),
+            configure.prepare_python(self.pin, str(self.archive), str(self.wheel), export_dir=str(self.export_dir),
                                      python_dir=str(self.python_dir), requirements=str(self.requirements),
                                      source_pins_file=self.source_pins,
                                      python="runner-python", env={"Path": r"C:\Emulator", "SystemRoot": r"C:\W"},
@@ -896,10 +1062,10 @@ class TestPreparePython(unittest.TestCase):
         site = self.python_dir / "Lib" / "site-packages"
         self.assertTrue((site / "numpy-2.3.2.dist-info").is_dir())
         self.assertTrue((site / "vmem-1.0.2.dist-info").is_dir())
-        self.assertFalse((site / "gdal-3.8.4.dist-info").exists())
+        self.assertTrue((site / "gdal-3.8.4.dist-info").is_dir())
         self.assertIn(b"\r\nLib\\site-packages\r\n", (self.python_dir / "python312._pth").read_bytes())
         self.assertIn(b"\r\nimport site\r\n", (self.python_dir / "python312._pth").read_bytes())
-        wheels, source = tools.pip_calls()
+        wheels, source, gdal = tools.pip_calls()
         self.assertEqual(wheels[0], "runner-python")
         self.assertEqual(wheels[wheels.index("--target") + 1], str(site))
         self.assertEqual(source[source.index("--target") + 1], str(site))
@@ -907,6 +1073,9 @@ class TestPreparePython(unittest.TestCase):
         self.assertEqual(tools.requirements_seen[0], "numpy==2.3.2\ngdal==3.8.4 ; sys_platform == 'linux'\n")
         self.assertIn("--require-hashes", source)
         self.assertEqual(source[-1], self.source_pins)
+        self.assertEqual(gdal[gdal.index("--target") + 1], str(site))
+        self.assertEqual(gdal[-1], str(self.wheel))
+        self.assertIn("--no-deps", gdal)
         self.assertEqual(tools.sqlite_at_check, b"export sqlite")
 
         check, kwargs = tools.calls[-1]
@@ -914,8 +1083,9 @@ class TestPreparePython(unittest.TestCase):
         args = json.loads(check[3])
         self.assertEqual(args["version"], "3.12.10")
         self.assertEqual(args["site_packages"], str(site))
-        self.assertEqual(args["pins"], [["numpy", "2.3.2"], ["vmem", "1.0.2"]])
-        self.assertEqual(args["imports"], ["numpy"])
+        self.assertEqual(args["pins"], [["numpy", "2.3.2"], ["vmem", "1.0.2"], ["gdal", "3.8.4"]])
+        self.assertEqual(args["imports"], ["numpy", "osgeo"])
+        self.assertEqual(kwargs["env"]["USE_PATH_FOR_GDAL_PYTHON"], "YES")
         self.assertEqual(kwargs["env"]["PATH"].split(";"), [str(self.python_dir), self.export_bin, r"C:\W\System32",
                                                             r"C:\W", r"C:\W\System32\Wbem"])
 
@@ -930,11 +1100,25 @@ class TestPreparePython(unittest.TestCase):
         self.prepare(FakePythonTools())
         stale = self.python_dir / "Lib" / "site-packages" / "stale.py"
         stale.write_text("")
-        self.requirements.write_text("numpy==2.3.3\nvmem==1.0.2\n")
+        self.requirements.write_text("numpy==2.3.3\nvmem==1.0.2\ngdal==3.8.4 ; sys_platform == 'linux'\n")
         tools = FakePythonTools()
         self.prepare(tools)
-        self.assertEqual(len(tools.pip_calls()), 2)
+        self.assertEqual(len(tools.pip_calls()), 3)
         self.assertFalse(stale.exists())
+
+    def test_new_gdal_wheel_lays_out_python_again(self):
+        self.prepare(FakePythonTools())
+        self.pin["assets"]["gdal-wheel"]["sha256"] = sha256(b"another wheel")
+        tools = FakePythonTools()
+        self.prepare(tools)
+        self.assertEqual(len(tools.pip_calls()), 3)
+
+    def test_gdal_wheel_of_another_version_stops_before_pip(self):
+        self.pin["assets"]["gdal-wheel"]["file"] = "gdal-3.9.0-cp312-cp312-win_amd64.whl"
+        tools = FakePythonTools()
+        with self.assertRaisesRegex(configure.DepsError, "GDAL wheel 3.9.0"):
+            self.prepare(tools)
+        self.assertEqual(tools.calls, [])
 
     def make_built_tree(self):
         """A SuperBuild tree where opencv and ceres have built and installed,
@@ -971,7 +1155,7 @@ class TestPreparePython(unittest.TestCase):
         self.assertTrue(cv2.exists())
         self.assertFalse(self.decide(build_dir, install_dir))
 
-        self.requirements.write_text("numpy==2.3.2\nvmem==1.0.2\n# a comment\n")
+        self.requirements.write_text("numpy==2.3.2\nvmem==1.0.2\ngdal==3.8.4 ; sys_platform == 'linux'\n# a comment\n")
         self.prepare(FakePythonTools())
         self.assertFalse(cv2.exists())
         self.assertTrue(self.decide(build_dir, install_dir))
@@ -1018,7 +1202,8 @@ class TestPreparePython(unittest.TestCase):
                                         imports=configure.SUPERBUILD_PYTHON_IMPORTS,
                                         dll_folders=[r"C:\aidm\SuperBuild\install\bin"])
         check, kwargs = tools.calls[-1]
-        self.assertEqual(json.loads(check[3])["imports"], ["numpy", "cv2"])
+        self.assertEqual(json.loads(check[3])["imports"], ["numpy", "cv2", "osgeo", "pdal"])
+        self.assertEqual(kwargs["env"]["USE_PATH_FOR_GDAL_PYTHON"], "YES")
         self.assertEqual(kwargs["env"]["PATH"].split(";")[:3],
                          [str(self.python_dir), r"C:\aidm\SuperBuild\install\bin", self.export_bin])
 

@@ -11,6 +11,8 @@ The package's Python is the embeddable package of the deps release. Its
 ._pth file is edited to import site and to list Lib\\site-packages, and the
 wheels of requirements.txt are installed there with the Python that runs
 this script, of the same version and architecture. No virtual environment.
+The GDAL Python bindings are the wheel of the deps release, installed there
+from its checked download. GDAL itself, PROJ and their DLLs are the export's.
 
 The functions that read the pin and check the downloads run on any platform,
 so the unit tests in tests/test_configure.py import this file on Linux.
@@ -88,6 +90,8 @@ _FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 _CMAKE_REQUIREMENT = re.compile(r"^cmake==(\d+)\.(\d+)\.(\d+)((?:\.\d+)?)(?:\s+--hash=sha256:[0-9a-f]{64})+$")
 # The file name of the Python embeddable package for 64-bit x86.
 _EMBEDDABLE_PYTHON = re.compile(r"^python-(\d+\.\d+\.\d+)-embed-amd64\.zip$")
+# The file name of the GDAL wheel of the deps release, with its version.
+_GDAL_WHEEL = re.compile(r"^gdal-(\d+\.\d+\.\d+)-(cp\d+)-(cp\d+)-win_amd64\.whl$", re.IGNORECASE)
 # One pin of requirements.txt: a name, optional extras, one exact version,
 # and optionally one sys_platform marker.
 _REQUIREMENT = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[A-Za-z0-9,._-]+\])?==([A-Za-z0-9.+!-]+)"
@@ -409,6 +413,28 @@ def embeddable_python_version(pin):
     return match.group(1)
 
 
+def gdal_wheel_version(pin, requirements=REQUIREMENTS_FILE):
+    """Return the GDAL version of the pinned wheel, from its file name.
+
+    Stop unless the wheel is built for the package's Python and its version
+    is the one requirements.txt pins for Linux: the export's GDAL is the
+    version the Linux images carry.
+    """
+    name = pin["assets"]["gdal-wheel"]["file"]
+    python_tag = "cp" + "".join(embeddable_python_version(pin).split(".")[:2])
+    match = _GDAL_WHEEL.match(name)
+    if not match or match.group(2) != python_tag or match.group(3) != python_tag:
+        raise DepsError("%s: the gdal-wheel asset %s is not named gdal-X.Y.Z-%s-%s-win_amd64.whl"
+                        % (PIN_FILE, name, python_tag, python_tag))
+    version = match.group(1)
+    linux = {canonical_name(n): v for n, v in read_requirements(requirements, platform_name="linux")}
+    if linux.get("gdal") != version:
+        raise DepsError("%s pins the GDAL wheel %s, but %s pins %s for Linux"
+                        % (PIN_FILE, version, requirements,
+                           "gdal==%s" % linux["gdal"] if "gdal" in linux else "no gdal"))
+    return version
+
+
 def check_build_python(pin, version=None, machine=None, pointer_bits=None):
     """Stop unless this script runs on the Python version and architecture of
     the embeddable package: the wheels it installs are chosen for its own."""
@@ -598,6 +624,12 @@ def pip_wheels_command(python, site_packages, requirements):
     return _pip_install(python, site_packages) + ["--only-binary", ":all:", "-r", requirements]
 
 
+def pip_gdal_wheel_command(python, site_packages, wheel):
+    """The pip command that installs the GDAL wheel from its checked download
+    and nothing else. numpy, which it imports, is a pin of requirements.txt."""
+    return _pip_install(python, site_packages) + ["--no-deps", "--no-index", wheel]
+
+
 def pip_source_command(python, site_packages, source_pins, path=SOURCE_PINS_FILE):
     """The pip command that builds and installs the source pins, each checked
     against the SHA-256 of its sdist. Each is pure Python and needs nothing
@@ -668,6 +700,23 @@ try:
 except sqlite3.Error as e:
     failures.append("the stdlib sqlite3 cannot open a database: %s" % e)
 
+# One process holds one SQLite: the version GDAL reports must be the one
+# the stdlib sqlite3 runs.
+if "osgeo" in sys.modules:
+    try:
+        from osgeo import gdal, ogr
+        database = ogr.GetDriverByName("SQLite").CreateDataSource(":memory:")
+        result = database.ExecuteSQL("SELECT sqlite_version()")
+        gdal_sqlite = result.GetNextFeature().GetField(0)
+        database.ReleaseResultSet(result)
+        database = None
+        print("GDAL %s reports SQLite %s" % (gdal.__version__, gdal_sqlite))
+        if gdal_sqlite != sqlite3.sqlite_version:
+            failures.append("GDAL reports SQLite %s, the stdlib sqlite3 runs %s"
+                            % (gdal_sqlite, sqlite3.sqlite_version))
+    except Exception as e:
+        failures.append("GDAL cannot report its SQLite version: %s: %s" % (type(e).__name__, e))
+
 if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
@@ -689,11 +738,21 @@ sys.exit(1 if failures else 0)
 """
 
 # Modules the check imports in the package's Python: numpy is the compiled
-# wheel most of the engine loads. After the SuperBuild, cv2 too: OpenCV
-# installs its Python module into the package's site-packages.
-EMBEDDED_PYTHON_IMPORTS = ("numpy",)
-SUPERBUILD_PYTHON_IMPORTS = ("numpy", "cv2")
-SUPERBUILD_BIN = os.path.join(ROOT, "SuperBuild", "install", "bin")
+# wheel most of the engine loads, osgeo the GDAL wheel of the deps release,
+# which loads the export's DLLs. After the SuperBuild, cv2 and pdal too:
+# OpenCV and the PDAL Python bindings install their modules into the
+# package's site-packages. pdal comes after osgeo: its DLLs are found in the
+# folders osgeo adds from PATH.
+EMBEDDED_PYTHON_IMPORTS = ("numpy", "osgeo")
+SUPERBUILD_PYTHON_IMPORTS = ("numpy", "cv2", "osgeo", "pdal")
+SUPERBUILD_INSTALL = os.path.join(ROOT, "SuperBuild", "install")
+SUPERBUILD_BIN = os.path.join(SUPERBUILD_INSTALL, "bin")
+# The data folders GDAL and PROJ read at run time, which the SuperBuild
+# copies from the export into its install folder, each with a file it must hold.
+DATA_FOLDERS = ((os.path.join("share", "gdal"), "gdalvrt.xsd"), (os.path.join("share", "proj"), "proj.db"))
+# Read by the osgeo package on Windows: it adds every folder of PATH to the
+# folders its DLLs, and so the DLLs of every module after it, load from.
+GDAL_DLL_SEARCH = {"USE_PATH_FOR_GDAL_PYTHON": "YES"}
 
 
 def check_embedded_python(python_dir, export_bin, pins, version, env, runner=subprocess.run,
@@ -710,25 +769,39 @@ def check_embedded_python(python_dir, export_bin, pins, version, env, runner=sub
     cmd = [os.path.join(python_dir, "python.exe"), "-c", EMBEDDED_PYTHON_CHECK, json.dumps(args)]
     folders = [python_dir] + list(dll_folders) + [export_bin]
     print("Checking the package's Python with PATH limited to %s and Windows" % ", ".join(folders))
-    result = runner(cmd, cwd=python_dir, env=minimal_path_environment(env, folders))
+    env = minimal_path_environment(env, folders)
+    env.update(GDAL_DLL_SEARCH)
+    result = runner(cmd, cwd=python_dir, env=env)
     if result.returncode != 0:
         raise DepsError("the package's Python in %s failed its check, exit code %s"
                         % (python_dir, result.returncode))
 
 
+def check_data_folders(install_dir=SUPERBUILD_INSTALL):
+    """Stop unless the install folder holds the GDAL and PROJ data folders; print each."""
+    for folder, required in DATA_FOLDERS:
+        path = os.path.join(install_dir, folder)
+        if not os.path.isfile(os.path.join(path, required)):
+            raise DepsError("%s has no %s: the SuperBuild copies it from the deps export" % (path, required))
+        print("Data folder %s present, with %d files, %s among them"
+              % (path, sum(len(files) for _, _, files in os.walk(path)), required))
+
+
 def python_marker(pin, requirements=REQUIREMENTS_FILE, source_pins=SOURCE_PINS_FILE):
-    return "%s %s %s %s\n" % (pin["tag"], pin["assets"]["python"]["sha256"],
-                               sha256_of(requirements), sha256_of(source_pins))
+    return "%s %s %s %s %s\n" % (pin["tag"], pin["assets"]["python"]["sha256"],
+                                  pin["assets"]["gdal-wheel"]["sha256"],
+                                  sha256_of(requirements), sha256_of(source_pins))
 
 
-def prepare_python(pin, archive, export_dir=EXPORT_DIR, python_dir=PYTHON_DIR,
+def prepare_python(pin, archive, gdal_wheel, export_dir=EXPORT_DIR, python_dir=PYTHON_DIR,
                    requirements=REQUIREMENTS_FILE, source_pins_file=SOURCE_PINS_FILE,
                    python=None, env=None, runner=subprocess.run):
     """Lay out the package's Python in python_dir and check it.
 
     Unpacks the embeddable package, edits its ._pth file, installs the
-    wheels of requirements and builds the source pins, unless a marker says
-    python_dir already holds this pin's package with these requirements. A
+    wheels of requirements, builds the source pins and installs the GDAL
+    wheel, unless a marker says python_dir already holds this pin's package
+    and wheel with these requirements. A
     new layout also leaves PYTHON_REINSTALL_MARKER, so the SuperBuild
     installs its Python modules into it again. Then replaces its SQLite
     with the export's and runs the check in the package's Python.
@@ -738,6 +811,7 @@ def prepare_python(pin, archive, export_dir=EXPORT_DIR, python_dir=PYTHON_DIR,
     pins = read_requirements(requirements, platform_name="win32")
     source_pins = load_source_pins(source_pins_file)
     check_source_pins(source_pins, pins, source_pins_file, requirements)
+    gdal_version = gdal_wheel_version(pin, requirements)
     site_packages = os.path.join(python_dir, SITE_PACKAGES)
     marker = python_marker(pin, requirements, source_pins_file)
     marker_path = os.path.join(python_dir, PYTHON_MARKER)
@@ -762,7 +836,8 @@ def prepare_python(pin, archive, export_dir=EXPORT_DIR, python_dir=PYTHON_DIR,
                                               os.path.join(folder, "requirements-wheels.txt"))
             for cmd, source in ((pip_wheels_command(python, site_packages, wheels), requirements),
                                 (pip_source_command(python, site_packages, source_pins, source_pins_file),
-                                 source_pins_file)):
+                                 source_pins_file),
+                                (pip_gdal_wheel_command(python, site_packages, gdal_wheel), gdal_wheel)):
                 print("Running %s" % subprocess.list2cmdline(cmd))
                 result = runner(cmd, env=env)
                 if result.returncode != 0:
@@ -773,7 +848,7 @@ def prepare_python(pin, archive, export_dir=EXPORT_DIR, python_dir=PYTHON_DIR,
 
     export_bin = os.path.join(export_dir, "installed", pin["triplet"], "bin")
     replace_sqlite(python_dir, export_bin)
-    check_embedded_python(python_dir, export_bin, pins, version, env, runner=runner)
+    check_embedded_python(python_dir, export_bin, pins + [("gdal", gdal_version)], version, env, runner=runner)
     return python_dir
 
 
@@ -798,7 +873,7 @@ def build():
     assets = fetch_pinned_assets(pin)
     unpack_export(pin, assets["export"])
     check_build_python(pin)
-    prepare_python(pin, assets["python"])
+    prepare_python(pin, assets["python"], assets["gdal-wheel"])
     site_packages = os.path.join(PYTHON_DIR, SITE_PACKAGES)
 
     cmake = install_cmake()
@@ -815,9 +890,11 @@ def build():
             superbuild_done(PYTHON_DIR)
 
     def check():
+        pins = read_requirements(platform_name="win32") + [("gdal", gdal_wheel_version(pin))]
         check_embedded_python(PYTHON_DIR, os.path.join(EXPORT_DIR, "installed", pin["triplet"], "bin"),
-                              read_requirements(platform_name="win32"), embeddable_python_version(pin),
+                              pins, embeddable_python_version(pin),
                               os.environ, imports=SUPERBUILD_PYTHON_IMPORTS, dll_folders=[SUPERBUILD_BIN])
+        check_data_folders()
 
     build_then_check(superbuild, check)
 
