@@ -702,6 +702,16 @@ class TestReadRequirements(unittest.TestCase):
         self.assertEqual(pins["numpy"], "2.3.2")
         self.assertEqual(pins["onnxruntime"], "1.22.1")
 
+    def test_setuptools_on_windows_only(self):
+        # codem imports distutils, which Python 3.12 lacks: setuptools
+        # provides it on Windows, python3-setuptools of configure.sh on Linux.
+        requirements = str(ROOT / "requirements.txt")
+        self.assertEqual(dict(configure.read_requirements(requirements, platform_name="win32"))["setuptools"],
+                         "68.1.2")
+        self.assertIn("codem", dict(configure.read_requirements(requirements, platform_name="win32")))
+        self.assertNotIn("setuptools", dict(configure.read_requirements(requirements, platform_name="linux")))
+        self.assertIn("python3-setuptools", (ROOT / "configure.sh").read_text())
+
     def test_line_the_check_cannot_read_stops_the_build(self):
         for line in ("numpy>=2", "numpy==2.3.2 ; python_version < '3.13'", "https://example.invalid/x.whl"):
             with self.assertRaisesRegex(configure.DepsError, "line 2"):
@@ -1202,7 +1212,7 @@ class TestPreparePython(unittest.TestCase):
                                         imports=configure.SUPERBUILD_PYTHON_IMPORTS,
                                         dll_folders=[r"C:\aidm\SuperBuild\install\bin"])
         check, kwargs = tools.calls[-1]
-        self.assertEqual(json.loads(check[3])["imports"], ["numpy", "cv2", "osgeo", "pdal"])
+        self.assertEqual(json.loads(check[3])["imports"], ["numpy", "cv2", "osgeo", "pdal", "codem"])
         self.assertEqual(kwargs["env"]["USE_PATH_FOR_GDAL_PYTHON"], "YES")
         self.assertEqual(kwargs["env"]["PATH"].split(";")[:3],
                          [str(self.python_dir), r"C:\aidm\SuperBuild\install\bin", self.export_bin])
