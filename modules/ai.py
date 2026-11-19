@@ -24,13 +24,26 @@ def read_image(img_path):
     return img
 
 
+def models_dir(platform=None, environ=None):
+    """The folder that holds downloaded model weights.
+
+    On Windows it is AIDM's folder under the user's local application data,
+    next to the bytecode cache that win32env.bat sets, so the package folder
+    stays what the interface installed. Elsewhere it is storage/models in
+    the engine folder.
+    """
+    platform = platform or sys.platform
+    environ = os.environ if environ is None else environ
+    if platform == 'win32':
+        local = environ.get('LOCALAPPDATA') or os.path.join(os.path.expanduser('~'), 'AppData', 'Local')
+        return os.path.join(local, 'AIDM', 'models')
+    return os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")), "storage", "models")
+
+
 def get_model(namespace, url, version, name = "model.onnx"):
     version = version.replace(".", "_")
 
-    base_dir = os.path.join(os.path.dirname(__file__), "..")
-    if sys.platform == 'win32':
-        base_dir = os.path.join(os.getenv('PROGRAMDATA'),"ODX")
-    base_dir = os.path.join(os.path.abspath(base_dir), "storage", "models")
+    base_dir = models_dir()
     
     namespace_dir = os.path.join(base_dir, namespace)
     versioned_dir = os.path.join(namespace_dir, version)
